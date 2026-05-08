@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, ImageIcon, Music, Video, X,
-  Terminal, Fingerprint, Activity, MapPin, Camera,
-  Calendar, AlertTriangle, CheckCircle, Search, Loader2,
-  FileWarning, Clock, HardDrive, Tag, Sparkles, RefreshCw
+  Terminal, Fingerprint, Activity,
+  AlertTriangle, CheckCircle, Search, Loader2,
+  FileWarning, Clock, HardDrive, Tag, Sparkles, RefreshCw, Info
 } from 'lucide-react';
 import exifr from 'exifr';
 import axios from 'axios';
@@ -12,10 +12,10 @@ import { verifyClaim } from '../api';
 
 const API_BASE = 'http://localhost:8000';
 
-const getFileType = (file) => {
-  if (file.type.startsWith('image/')) return 'image';
-  if (file.type.startsWith('audio/')) return 'audio';
-  if (file.type.startsWith('video/')) return 'video';
+const getFileType = (f) => {
+  if (f.type.startsWith('image/')) return 'image';
+  if (f.type.startsWith('audio/')) return 'audio';
+  if (f.type.startsWith('video/')) return 'video';
   return 'unknown';
 };
 
@@ -25,21 +25,18 @@ const formatBytes = (bytes) => {
 };
 
 export const MediaForensicScanner = () => {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [isHovering, setIsHovering] = useState(false);
-
-  // States
-  const [exifData, setExifData] = useState(null);
-  const [isExtracting, setIsExtracting] = useState(false);   // Groq extracting claim
+  const [file, setFile]           = useState(null);
+  const [preview, setPreview]     = useState(null);
+  const [isHovering, setHover]    = useState(false);
+  const [exifData, setExifData]   = useState(null);
+  const [isExtracting, setExtracting] = useState(false);
   const [claimText, setClaimText] = useState('');
   const [extractError, setExtractError] = useState(null);
-
-  const [isVerifying, setIsVerifying] = useState(false);
+  const [isVerifying, setVerifying]     = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
-  const [verifyError, setVerifyError] = useState(null);
+  const [verifyError, setVerifyError]   = useState(null);
 
-  // ── Handle file drop/select ──────────────────────────────────────────
+  // ── File selected ─────────────────────────────────────────────────────
   const handleFile = async (selectedFile) => {
     if (!selectedFile) return;
     setFile(selectedFile);
@@ -49,83 +46,58 @@ export const MediaForensicScanner = () => {
     setVerifyError(null);
     setExtractError(null);
 
-    // Image preview
     if (selectedFile.type.startsWith('image/')) {
       setPreview(URL.createObjectURL(selectedFile));
     } else {
       setPreview(null);
     }
 
-    // 1. Real EXIF extraction (runs in parallel with Groq)
-    exifr.parse(selectedFile, {
-      pick: ['Make', 'Model', 'DateTimeOriginal', 'GPSLatitude', 'GPSLongitude',
-             'Software', 'XResolution', 'YResolution', 'PixelXDimension', 'PixelYDimension'],
-      translateValues: true,
-    }).then(exif => setExifData(exif || {})).catch(() => setExifData({}));
+    // Passive EXIF read – just for info, no scoring
+    exifr.parse(selectedFile, { pick: ['Make', 'Model', 'DateTimeOriginal', 'Software', 'GPSLatitude', 'GPSLongitude'] })
+      .then(exif => setExifData(exif || {}))
+      .catch(() => setExifData({}));
 
-    // 2. Send to Groq for smart claim extraction
-    setIsExtracting(true);
+    // Auto-extract claim via Groq
+    setExtracting(true);
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      const res = await axios.post(`${API_BASE}/api/media/extract`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      setClaimText(res.data.claim || '');
-    } catch (err) {
-      setExtractError('Groq could not extract the claim. You can type it manually below.');
-    } finally {
-      setIsExtracting(false);
-    }
-  };
-
-  // ── Re-extract claim ─────────────────────────────────────────────────
-  const reExtract = async () => {
-    if (!file) return;
-    setIsExtracting(true);
-    setExtractError(null);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await axios.post(`${API_BASE}/api/media/extract`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+      const res = await axios.post(`${API_BASE}/api/media/extract`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       setClaimText(res.data.claim || '');
     } catch {
-      setExtractError('Re-extraction failed. Type the claim manually.');
+      setExtractError('Groq could not read this file automatically. Type the claim below manually.');
     } finally {
-      setIsExtracting(false);
+      setExtracting(false);
     }
   };
 
-  // ── Verify claim via AI ──────────────────────────────────────────────
+  const reExtract = async () => {
+    if (!file) return;
+    setExtracting(true); setExtractError(null);
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await axios.post(`${API_BASE}/api/media/extract`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setClaimText(res.data.claim || '');
+    } catch { setExtractError('Re-extraction failed. Type the claim manually.'); }
+    finally { setExtracting(false); }
+  };
+
   const handleVerify = async () => {
     if (!claimText.trim()) return;
-    setIsVerifying(true);
-    setVerifyError(null);
-    setVerifyResult(null);
+    setVerifying(true); setVerifyError(null); setVerifyResult(null);
     try {
       const data = await verifyClaim(claimText);
       setVerifyResult(data);
-    } catch {
-      setVerifyError('AI Engine failed. Make sure the backend is running.');
-    } finally {
-      setIsVerifying(false);
-    }
+    } catch { setVerifyError('AI Engine unreachable. Ensure the backend is running.'); }
+    finally { setVerifying(false); }
   };
 
   const reset = () => {
     setFile(null); setPreview(null); setExifData(null);
-    setClaimText(''); setVerifyResult(null);
-    setVerifyError(null); setExtractError(null);
+    setClaimText(''); setVerifyResult(null); setVerifyError(null); setExtractError(null);
   };
-
-  // Derived flags
-  const hasCamera   = exifData && (exifData.Make || exifData.Model);
-  const hasSoftware = exifData && exifData.Software;
-  const hasGPS      = exifData && exifData.GPSLatitude;
-  const isScreenshot = !hasCamera && file?.type.startsWith('image/');
-  const metadataRisk = hasSoftware ? 85 : isScreenshot ? 65 : 20;
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-10 space-y-8">
@@ -141,7 +113,7 @@ export const MediaForensicScanner = () => {
               Multimodal <span className="text-cyan-400">Forensics</span>
             </h2>
             <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] font-bold">
-              Upload viral media → AI extracts claim → Verify globally
+              Upload media → Groq AI reads claim → Verify against global sources
             </p>
           </div>
         </div>
@@ -156,19 +128,21 @@ export const MediaForensicScanner = () => {
       {!file && (
         <motion.div
           initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-          onMouseEnter={() => setIsHovering(true)}
-          onMouseLeave={() => setIsHovering(false)}
-          onDragOver={(e) => { e.preventDefault(); setIsHovering(true); }}
-          onDragLeave={() => setIsHovering(false)}
-          onDrop={(e) => { e.preventDefault(); setIsHovering(false); handleFile(e.dataTransfer.files[0]); }}
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          onDragOver={(e) => { e.preventDefault(); setHover(true); }}
+          onDragLeave={() => setHover(false)}
+          onDrop={(e) => { e.preventDefault(); setHover(false); handleFile(e.dataTransfer.files[0]); }}
           className={`relative border-2 border-dashed rounded-3xl p-24 flex flex-col items-center justify-center transition-all duration-500 ${
             isHovering ? 'border-cyan-400 bg-cyan-400/5 shadow-[0_0_60px_rgba(34,211,238,0.12)]' : 'border-slate-800 bg-slate-900/30'
           }`}
         >
           <Upload className={`w-16 h-16 mb-6 transition-colors duration-500 ${isHovering ? 'text-cyan-400' : 'text-slate-600'}`} />
           <h3 className="text-xl font-bold text-slate-200 mb-2">Drop Viral Media Here</h3>
-          <p className="text-slate-500 text-sm mb-2 font-mono uppercase tracking-widest text-center">Memes · Screenshots · Videos · Audio clips</p>
-          <p className="text-slate-600 text-[10px] font-mono mb-8">Groq AI will instantly extract the core claim</p>
+          <p className="text-slate-500 text-sm mb-1 text-center">Memes · Screenshots · News images · Audio · Video clips</p>
+          <p className="text-slate-600 text-[10px] font-mono mb-8 uppercase tracking-widest">
+            Groq AI instantly reads the claim — verdict comes from global source matching
+          </p>
           <label className="cyber-button cursor-pointer">
             <Upload className="w-4 h-4" /> Select File
             <input type="file" className="hidden" accept="image/*,audio/*,video/*" onChange={(e) => handleFile(e.target.files[0])} />
@@ -176,138 +150,97 @@ export const MediaForensicScanner = () => {
         </motion.div>
       )}
 
-      {/* ── MAIN ANALYSIS PANEL ── */}
+      {/* ── MAIN PANEL ── */}
       {file && (
         <motion.div
           initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
           className="grid grid-cols-1 lg:grid-cols-12 gap-8"
         >
-          {/* LEFT: Preview + Metadata */}
+          {/* LEFT: Media Preview + Neutral File Info */}
           <div className="lg:col-span-5 space-y-6">
 
             {/* Preview */}
             {preview && (
               <div className="cyber-card p-0 overflow-hidden relative rounded-2xl">
-                <img src={preview} alt="Uploaded" className="w-full object-contain max-h-72" />
-                {isScreenshot && (
-                  <span className="absolute top-3 right-3 bg-amber-500 text-black text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full">
-                    Screenshot Detected
-                  </span>
-                )}
-                {hasSoftware && (
-                  <span className="absolute top-3 left-3 bg-red-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full">
-                    Edit Software Trace
-                  </span>
-                )}
+                <img src={preview} alt="Uploaded" className="w-full object-contain max-h-[320px]" />
               </div>
             )}
 
-            {/* File Metadata */}
-            <div className="cyber-card border-t-2 border-t-blue-500/50">
-              <div className="flex items-center gap-2 mb-5 text-blue-400">
+            {/* File Info — NEUTRAL, no risk score */}
+            <div className="cyber-card border-t-2 border-t-slate-600/50">
+              <div className="flex items-center gap-2 mb-5 text-slate-400">
                 <Terminal className="w-4 h-4" />
-                <h4 className="font-black uppercase tracking-widest text-xs">Metadata Integrity</h4>
+                <h4 className="font-black uppercase tracking-widest text-xs">File Information</h4>
               </div>
               <div className="space-y-3 font-mono text-[11px] text-slate-400">
-                <MetaRow icon={<Tag size={10}/>}       label="FILE"     value={file.name} c="cyan" />
-                <MetaRow icon={<HardDrive size={10}/>} label="SIZE"     value={formatBytes(file.size)} c="cyan" />
-                <MetaRow icon={<Clock size={10}/>}     label="MODIFIED" value={new Date(file.lastModified).toUTCString()} c="cyan" />
-                {hasCamera && (
-                  <>
-                    <MetaRow icon={<Camera size={10}/>}   label="CAMERA"    value={`${exifData.Make || ''} ${exifData.Model || ''}`.trim()} c="lime" />
-                    {exifData.DateTimeOriginal && (
-                      <MetaRow icon={<Calendar size={10}/>} label="SHOT DATE" value={new Date(exifData.DateTimeOriginal).toUTCString()} c="lime" />
-                    )}
-                  </>
+                <MetaRow icon={<Tag size={10}/>}       label="NAME"     value={file.name} />
+                <MetaRow icon={<HardDrive size={10}/>} label="SIZE"     value={formatBytes(file.size)} />
+                <MetaRow icon={<Clock size={10}/>}     label="MODIFIED" value={new Date(file.lastModified).toUTCString()} />
+                {exifData?.Make && (
+                  <MetaRow label="CAMERA" value={`${exifData.Make} ${exifData.Model || ''}`.trim()} highlight />
                 )}
-                {hasGPS && (
-                  <MetaRow icon={<MapPin size={10}/>} label="GPS" value={`${exifData.GPSLatitude?.toFixed(4)}°N ${exifData.GPSLongitude?.toFixed(4)}°E`} c="lime" />
+                {exifData?.Software && (
+                  <MetaRow label="SOFTWARE" value={exifData.Software} highlight />
                 )}
               </div>
 
-              {/* Flags */}
-              {isScreenshot && (
-                <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                  <p className="text-amber-400 font-black uppercase text-[10px] tracking-widest">⚠ No Camera EXIF</p>
-                  <p className="text-slate-500 text-xs mt-1">Image was screenshotted or downloaded. Original device unverifiable.</p>
-                </div>
-              )}
-              {hasSoftware && (
-                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl">
-                  <p className="text-red-400 font-black uppercase text-[10px] tracking-widest">⚠ Edit History Found</p>
-                  <p className="text-red-300 text-xs mt-1">{exifData.Software}</p>
-                </div>
-              )}
-
-              {/* Metadata Risk */}
-              <div className="mt-5 pt-4 border-t border-white/5">
-                <div className="flex justify-between text-[10px] font-bold mb-2 uppercase tracking-widest">
-                  <span className="text-slate-500">Metadata Risk</span>
-                  <span className={metadataRisk >= 60 ? 'text-red-400' : 'text-lime-400'}>{metadataRisk}%</span>
-                </div>
-                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }} animate={{ width: `${metadataRisk}%` }}
-                    transition={{ duration: 1.2, ease: 'easeOut' }}
-                    className={`h-full rounded-full ${metadataRisk >= 60 ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 'bg-lime-500'}`}
-                  />
-                </div>
+              {/* Honest disclaimer */}
+              <div className="mt-5 pt-4 border-t border-white/5 flex items-start gap-2 text-slate-500">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-cyan-500/60" />
+                <p className="text-[10px] leading-relaxed">
+                  File metadata alone does <span className="text-white font-bold">not</span> indicate whether content is true or false.
+                  Verdict is determined only by <span className="text-cyan-400 font-bold">AI claim verification</span> against live global sources.
+                </p>
               </div>
             </div>
           </div>
 
-          {/* RIGHT: AI Claim Extraction + Verify */}
+          {/* RIGHT: Groq Claim Extraction + AI Verify */}
           <div className="lg:col-span-7 space-y-6">
 
-            {/* Groq Extraction Card */}
+            {/* Claim extraction box */}
             <div className="cyber-card border-t-2 border-t-cyan-500/50">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2 text-cyan-400">
                   <Sparkles className="w-4 h-4" />
-                  <h4 className="font-black uppercase tracking-widest text-xs">Groq AI Claim Extraction</h4>
+                  <h4 className="font-black uppercase tracking-widest text-xs">Groq AI · Claim Extraction</h4>
                 </div>
                 {!isExtracting && file && (
-                  <button
-                    onClick={reExtract}
-                    title="Re-extract"
-                    className="p-1.5 text-slate-500 hover:text-cyan-400 transition-colors"
-                  >
+                  <button onClick={reExtract} title="Re-extract" className="p-1.5 text-slate-500 hover:text-cyan-400 transition-colors">
                     <RefreshCw size={14} />
                   </button>
                 )}
               </div>
 
               {isExtracting ? (
-                <div className="flex items-center gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
+                <div className="flex items-center gap-3 p-5 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
                   <Loader2 className="animate-spin text-cyan-400 w-5 h-5 shrink-0" />
                   <div>
-                    <p className="text-cyan-300 font-bold text-sm">Groq Vision Analyzing...</p>
-                    <p className="text-slate-500 text-xs">Extracting only the core claim from your media</p>
+                    <p className="text-cyan-300 font-bold text-sm">Reading media with Groq Vision...</p>
+                    <p className="text-slate-500 text-xs mt-0.5">Extracting only the core verifiable claim</p>
                   </div>
                 </div>
               ) : (
-                <>
+                <div>
                   {extractError && (
                     <p className="text-amber-400 text-xs font-bold mb-3 uppercase tracking-widest">{extractError}</p>
                   )}
-                  <div className="relative">
-                    {claimText && (
-                      <div className="absolute -top-2 left-3 px-2 bg-slate-900 text-[9px] font-black uppercase tracking-widest text-cyan-500">
-                        Extracted Claim · Edit if needed
-                      </div>
-                    )}
-                    <textarea
-                      value={claimText}
-                      onChange={(e) => setClaimText(e.target.value)}
-                      placeholder="AI will extract the claim from your media automatically..."
-                      className="cyber-input min-h-[140px] text-base leading-relaxed"
-                    />
-                  </div>
-                </>
+                  {claimText && (
+                    <p className="text-[9px] text-cyan-500 font-black uppercase tracking-widest mb-2">
+                      ✦ Auto-extracted — review and edit if needed
+                    </p>
+                  )}
+                  <textarea
+                    value={claimText}
+                    onChange={(e) => setClaimText(e.target.value)}
+                    placeholder="AI will extract the key claim from your media automatically..."
+                    className="cyber-input min-h-[140px] text-base leading-relaxed"
+                  />
+                </div>
               )}
             </div>
 
-            {/* Verify Button */}
+            {/* Verify button */}
             {!verifyResult && (
               <div className="space-y-3">
                 {verifyError && (
@@ -322,7 +255,7 @@ export const MediaForensicScanner = () => {
                 >
                   {isVerifying
                     ? <><Loader2 className="animate-spin w-4 h-4" /> Probing Global Sources...</>
-                    : <><Search className="w-4 h-4" /> Run AI Verification</>
+                    : <><Search className="w-4 h-4" /> Verify This Claim</>
                   }
                 </button>
               </div>
@@ -339,7 +272,9 @@ export const MediaForensicScanner = () => {
                   <div className="relative z-10 space-y-4">
                     <Activity className="w-12 h-12 text-cyan-400 mx-auto animate-pulse" />
                     <h3 className="text-lg font-black text-cyan-400 uppercase tracking-[0.3em]">Neural Probe Active</h3>
-                    <p className="text-xs text-slate-500 uppercase tracking-widest animate-pulse">Matching against global intelligence sources...</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-widest animate-pulse">
+                      Cross-referencing against global intelligence sources...
+                    </p>
                   </div>
                 </motion.div>
               )}
@@ -380,9 +315,9 @@ export const MediaForensicScanner = () => {
                       </p>
                       <div className="space-y-4">
                         {[
-                          { label: 'Fear Language', value: verifyResult.risk_metrics.fear_level, color: '#f87171' },
-                          { label: 'Urgency Patterns', value: verifyResult.risk_metrics.urgency_level, color: '#fbbf24' },
-                          { label: 'Conspiracy Indicators', value: verifyResult.risk_metrics.conspiracy_level, color: '#c084fc' },
+                          { label: 'Fear Language',         value: verifyResult.risk_metrics.fear_level,        color: '#f87171' },
+                          { label: 'Urgency Patterns',      value: verifyResult.risk_metrics.urgency_level,     color: '#fbbf24' },
+                          { label: 'Conspiracy Indicators', value: verifyResult.risk_metrics.conspiracy_level,  color: '#c084fc' },
                         ].map((item) => (
                           <div key={item.label}>
                             <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest mb-1">
@@ -426,12 +361,8 @@ export const MediaForensicScanner = () => {
                   )}
 
                   <div className="flex gap-4">
-                    <button onClick={() => setVerifyResult(null)} className="cyber-button flex-1 justify-center">
-                      ← Edit & Re-verify
-                    </button>
-                    <button onClick={reset} className="cyber-button flex-1 justify-center">
-                      New Scan
-                    </button>
+                    <button onClick={() => setVerifyResult(null)} className="cyber-button flex-1 justify-center">← Edit & Re-verify</button>
+                    <button onClick={reset} className="cyber-button flex-1 justify-center">New Scan</button>
                   </div>
                 </motion.div>
               )}
@@ -444,18 +375,18 @@ export const MediaForensicScanner = () => {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
-const MetaRow = ({ icon, label, value, c }) => (
+const MetaRow = ({ icon, label, value, highlight }) => (
   <div className="flex justify-between items-start gap-2 border-b border-white/5 pb-2 last:border-0">
     <span className="flex items-center gap-1.5 text-slate-500 shrink-0 uppercase tracking-wider">{icon} {label}</span>
-    <span className={`font-bold text-right break-all ${c === 'lime' ? 'text-lime-400' : 'text-cyan-300'}`}>{value || 'N/A'}</span>
+    <span className={`font-bold text-right break-all ${highlight ? 'text-slate-300' : 'text-cyan-300'}`}>{value || 'N/A'}</span>
   </div>
 );
 
 const getVerdictColor  = (v = '') => v.includes('TRUE') ? 'text-lime-400' : v.includes('FALSE') ? 'text-red-400' : v.includes('MIXED') ? 'text-amber-400' : 'text-slate-400';
 const getVerdictBorder = (v = '') => v.includes('TRUE') ? 'border-lime-500' : v.includes('FALSE') ? 'border-red-500' : v.includes('MIXED') ? 'border-amber-500' : 'border-slate-500';
 const getVerdictIcon   = (v = '') => {
-  if (v.includes('TRUE'))  return <CheckCircle  className="w-12 h-12 text-lime-400  shrink-0" />;
-  if (v.includes('FALSE')) return <FileWarning  className="w-12 h-12 text-red-400   shrink-0" />;
+  if (v.includes('TRUE'))  return <CheckCircle   className="w-12 h-12 text-lime-400 shrink-0" />;
+  if (v.includes('FALSE')) return <FileWarning   className="w-12 h-12 text-red-400 shrink-0" />;
   if (v.includes('MIXED')) return <AlertTriangle className="w-12 h-12 text-amber-400 shrink-0" />;
   return <Activity className="w-12 h-12 text-slate-400 shrink-0" />;
 };
