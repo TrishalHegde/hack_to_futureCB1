@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Upload, ImageIcon, Music, Video, X,
-  Terminal, Fingerprint, Activity,
+  Upload, X, Terminal, Fingerprint, Activity,
   AlertTriangle, CheckCircle, Search, Loader2,
-  FileWarning, Clock, HardDrive, Tag, Sparkles, RefreshCw, Info
+  FileWarning, Clock, HardDrive, Tag, Sparkles, RefreshCw, Info, Link2
 } from 'lucide-react';
 import exifr from 'exifr';
 import axios from 'axios';
@@ -25,16 +24,21 @@ const formatBytes = (bytes) => {
 };
 
 export const MediaForensicScanner = () => {
-  const [file, setFile]           = useState(null);
-  const [preview, setPreview]     = useState(null);
-  const [isHovering, setHover]    = useState(false);
-  const [exifData, setExifData]   = useState(null);
-  const [isExtracting, setExtracting] = useState(false);
-  const [claimText, setClaimText] = useState('');
+  const [inputMode, setInputMode]   = useState('file'); // 'file' | 'url'
+  const [urlInput, setUrlInput]     = useState('');
+  const [isUrlLoading, setUrlLoad]  = useState(false);
+  const [urlError, setUrlError]     = useState(null);
+  const [file, setFile]             = useState(null);
+  const [preview, setPreview]       = useState(null);
+  const [isHovering, setHover]      = useState(false);
+  const [exifData, setExifData]     = useState(null);
+  const [isExtracting, setExtracting]   = useState(false);
+  const [claimText, setClaimText]       = useState('');
   const [extractError, setExtractError] = useState(null);
   const [isVerifying, setVerifying]     = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
   const [verifyError, setVerifyError]   = useState(null);
+  const [sourceLabel, setSourceLabel]   = useState('');  // what was scanned
 
   // ── File selected ─────────────────────────────────────────────────────
   const handleFile = async (selectedFile) => {
@@ -96,7 +100,28 @@ export const MediaForensicScanner = () => {
 
   const reset = () => {
     setFile(null); setPreview(null); setExifData(null);
-    setClaimText(''); setVerifyResult(null); setVerifyError(null); setExtractError(null);
+    setClaimText(''); setVerifyResult(null); setVerifyError(null);
+    setExtractError(null); setUrlInput(''); setUrlError(null);
+    setSourceLabel('');
+  };
+
+  // ── URL submission ────────────────────────────────────────────────────
+  const handleUrl = async () => {
+    const url = urlInput.trim();
+    if (!url) return;
+    setUrlError(null); setClaimText(''); setVerifyResult(null); setVerifyError(null);
+    setUrlLoad(true); setSourceLabel(url);
+    try {
+      const res = await axios.post(`${API_BASE}/api/media/extract-url`, { url });
+      setClaimText(res.data.claim || '');
+      // Mark file as 'url mode' so the panel opens
+      setFile({ name: url, size: 0, lastModified: Date.now(), type: 'url', _isUrl: true });
+    } catch (err) {
+      const detail = err?.response?.data?.detail || 'URL extraction failed. Try a direct video link.';
+      setUrlError(detail);
+    } finally {
+      setUrlLoad(false);
+    }
   };
 
   return (
@@ -124,31 +149,121 @@ export const MediaForensicScanner = () => {
         )}
       </div>
 
-      {/* ── UPLOAD ZONE ── */}
+      {/* ── INPUT ZONE (File or URL) ── */}
       {!file && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-          onMouseEnter={() => setHover(true)}
-          onMouseLeave={() => setHover(false)}
-          onDragOver={(e) => { e.preventDefault(); setHover(true); }}
-          onDragLeave={() => setHover(false)}
-          onDrop={(e) => { e.preventDefault(); setHover(false); handleFile(e.dataTransfer.files[0]); }}
-          className={`relative border-2 border-dashed rounded-3xl p-24 flex flex-col items-center justify-center transition-all duration-500 ${
-            isHovering ? 'border-cyan-400 bg-cyan-400/5 shadow-[0_0_60px_rgba(34,211,238,0.12)]' : 'border-slate-800 bg-slate-900/30'
-          }`}
-        >
-          <Upload className={`w-16 h-16 mb-6 transition-colors duration-500 ${isHovering ? 'text-cyan-400' : 'text-slate-600'}`} />
-          <h3 className="text-xl font-bold text-slate-200 mb-2">Drop Viral Media Here</h3>
-          <p className="text-slate-500 text-sm mb-1 text-center">Memes · Screenshots · News images · Audio · Video clips</p>
-          <p className="text-slate-600 text-[10px] font-mono mb-8 uppercase tracking-widest">
-            Groq AI instantly reads the claim — verdict comes from global source matching
-          </p>
-          <label className="cyber-button cursor-pointer">
-            <Upload className="w-4 h-4" /> Select File
-            <input type="file" className="hidden" accept="image/*,audio/*,video/*" onChange={(e) => handleFile(e.target.files[0])} />
-          </label>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+
+          {/* Tab Switcher */}
+          <div className="flex gap-2 p-1 bg-slate-900/60 border border-white/5 rounded-2xl w-fit">
+            <button
+              onClick={() => setInputMode('file')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                inputMode === 'file'
+                  ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Upload size={14} /> Upload File
+            </button>
+            <button
+              onClick={() => setInputMode('url')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                inputMode === 'url'
+                  ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Link2 size={14} /> Video URL
+            </button>
+          </div>
+
+          {/* File Upload Panel */}
+          {inputMode === 'file' && (
+            <div
+              onMouseEnter={() => setHover(true)}
+              onMouseLeave={() => setHover(false)}
+              onDragOver={(e) => { e.preventDefault(); setHover(true); }}
+              onDragLeave={() => setHover(false)}
+              onDrop={(e) => { e.preventDefault(); setHover(false); handleFile(e.dataTransfer.files[0]); }}
+              className={`border-2 border-dashed rounded-3xl p-20 flex flex-col items-center justify-center transition-all duration-500 ${
+                isHovering ? 'border-cyan-400 bg-cyan-400/5 shadow-[0_0_60px_rgba(34,211,238,0.12)]' : 'border-slate-800 bg-slate-900/30'
+              }`}
+            >
+              <Upload className={`w-14 h-14 mb-5 transition-colors duration-500 ${isHovering ? 'text-cyan-400' : 'text-slate-600'}`} />
+              <h3 className="text-xl font-bold text-slate-200 mb-2">Drop Viral Media Here</h3>
+              <p className="text-slate-500 text-sm mb-1 text-center">Memes · Screenshots · News images · Audio · Video</p>
+              <p className="text-slate-600 text-[10px] font-mono mb-8 uppercase tracking-widest">
+                Groq AI reads the claim — verdict from global sources
+              </p>
+              <label className="cyber-button cursor-pointer">
+                <Upload className="w-4 h-4" /> Select File
+                <input type="file" className="hidden" accept="image/*,audio/*,video/*" onChange={(e) => handleFile(e.target.files[0])} />
+              </label>
+            </div>
+          )}
+
+          {/* URL Input Panel */}
+          {inputMode === 'url' && (
+            <div className="cyber-card border-t-2 border-t-cyan-500/50 space-y-5">
+              <div className="flex items-center gap-3">
+                <Link2 className="text-cyan-400 w-5 h-5" />
+                <div>
+                  <h3 className="text-white font-black uppercase tracking-wider text-sm">Paste Video / News Link</h3>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-widest mt-0.5">YouTube · Twitter/X · Instagram Reels · Direct MP4</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <input
+                  type="url"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUrl()}
+                  placeholder="https://youtube.com/watch?v=... or any video URL"
+                  className="cyber-input !min-h-0 py-3 flex-1 text-sm"
+                />
+                <button
+                  onClick={handleUrl}
+                  disabled={!urlInput.trim() || isUrlLoading}
+                  className="cyber-button px-6 shrink-0"
+                >
+                  {isUrlLoading
+                    ? <><Loader2 className="animate-spin w-4 h-4" /> Fetching...</>
+                    : <><Search className="w-4 h-4" /> Analyze</>
+                  }
+                </button>
+              </div>
+
+              {isUrlLoading && (
+                <div className="flex items-center gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
+                  <Loader2 className="animate-spin text-cyan-400 w-5 h-5 shrink-0" />
+                  <div>
+                    <p className="text-cyan-300 font-bold text-sm">Downloading & transcribing video...</p>
+                    <p className="text-slate-500 text-xs mt-0.5">yt-dlp → Groq Whisper → Claim extraction</p>
+                  </div>
+                </div>
+              )}
+
+              {urlError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs font-bold uppercase tracking-widest">
+                  {urlError}
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {[
+                  'https://www.youtube.com/watch?v=...',
+                  'https://twitter.com/...',
+                  'https://www.instagram.com/reel/...',
+                ].map(ex => (
+                  <span key={ex} className="text-[9px] font-mono text-slate-600 bg-slate-900 px-2 py-1 rounded border border-white/5">{ex}</span>
+                ))}
+              </div>
+            </div>
+          )}
         </motion.div>
       )}
+
 
       {/* ── MAIN PANEL ── */}
       {file && (

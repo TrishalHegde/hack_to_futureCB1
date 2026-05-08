@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File as FastAPIFile
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -169,6 +170,25 @@ async def extract_media_claim(file: UploadFile = FastAPIFile(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Groq extraction failed: {str(e)}")
 
+    return {"claim": claim}
+
+class URLRequest(BaseModel):
+    url: str
+
+@app.post("/api/media/extract-url")
+async def extract_url_claim(body: URLRequest):
+    """
+    Accepts a YouTube / news video URL.
+    Downloads audio via yt-dlp, transcribes with Whisper, extracts core claim.
+    Returns { "claim": "..." }
+    """
+    url = body.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL — must start with http:// or https://")
+    try:
+        claim = await media_service.extract_claim_from_url(url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"URL extraction failed: {str(e)}")
     return {"claim": claim}
 
 if __name__ == "__main__":

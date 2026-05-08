@@ -1,6 +1,8 @@
 import os
 import base64
 import io
+import tempfile
+import subprocess
 from groq import Groq
 
 # Strict extraction system prompt — NEVER evaluates truth, ONLY extracts the claim as-is
@@ -118,3 +120,50 @@ class MediaService:
 
         except Exception as e:
             return f"Video processing failed: {str(e)}"
+
+    async def extract_claim_from_url(self, url: str) -> str:
+        """
+        Downloads audio from a YouTube/news video URL via yt-dlp,
+        transcribes it with Whisper, then extracts the raw claim.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = os.path.join(tmpdir, "audio.mp3")
+
+            # Download best audio stream as mp3 (max 180 seconds to keep it fast)
+            cmd = [
+                "yt-dlp",
+                "--no-playlist",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", "5",
+                "--match-filter", "duration < 600",   # skip videos > 10 min
+                "-o", audio_path,
+                url,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                raise RuntimeError(f"yt-dlp failed: {result.stderr[:300]}")
+
+            # Read the downloaded mp3
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+
+        # Transcribe with Whisper
+        transcription = self.client.audio.transcriptions.create(
+            file=("audio.mp3", io.BytesIO(audio_bytes)),
+            model="whisper-large-v3",
+            response_format="text",
+        )
+        transcript_text = transcription if isinstance(transcription, str) else transcription.text
+
+        # Extract raw claim (no fact-checking)
+        response = self.client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": _EXTRACT_SYSTEM},
+                {"role": "user", "content": f"Content: {transcript_text[:3000]}"}
+            ],
+            max_tokens=80,
+            temperature=0.0,
+        )
+        return response.choices[0].message.content.strip()
