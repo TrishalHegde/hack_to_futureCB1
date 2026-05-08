@@ -2,26 +2,66 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .glass-panel {
-    @apply bg-white/10 backdrop-blur-md border border-white/20 shadow-lg rounded-2xl;
-  }
-  .glass-button {
-    @apply bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 text-white shadow-md transition-all duration-300 rounded-xl px-4 py-2;
-  }
-  .glass-input {
-    @apply bg-black/20 backdrop-blur-md border border-white/20 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400 rounded-xl w-full p-4;
+:root {
+  --primary: #00f2ff; /* Cyan */
+  --secondary: #ff00ff; /* Magenta */
+  --accent: #39ff14; /* Lime */
+  --background: #020617; /* Dark Navy */
+  --surface: rgba(15, 23, 42, 0.8);
+  --border: rgba(255, 255, 255, 0.1);
+}
+
+@layer base {
+  body {
+    @apply m-0 min-h-screen text-slate-200 overflow-x-hidden font-sans bg-slate-950;
+    background-image: 
+      radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
+    background-size: 40px 40px;
   }
 }
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-  min-height: 100vh;
-  color: white;
+@layer components {
+  .cyber-card {
+    @apply bg-slate-900/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl transition-all duration-300;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+  }
+  
+  .cyber-card:hover {
+    @apply border-cyan-500/30;
+    box-shadow: 0 0 30px rgba(0, 242, 255, 0.1);
+  }
+
+  .neon-text-cyan {
+    text-shadow: 0 0 10px rgba(0, 242, 255, 0.8);
+  }
+
+  .neon-text-magenta {
+    text-shadow: 0 0 10px rgba(255, 0, 255, 0.8);
+  }
+
+  .cyber-button {
+    @apply relative px-6 py-3 bg-cyan-500/10 border border-cyan-500/50 text-cyan-400 font-bold tracking-widest uppercase text-xs rounded-lg overflow-hidden transition-all duration-300 hover:bg-cyan-500/20 hover:border-cyan-400 hover:text-cyan-200;
+  }
+
+  .cyber-input {
+    @apply bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-all duration-300;
+  }
+}
+
+/* Custom Scan Animation */
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+.scanner-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--primary), transparent);
+  animation: scan 2s linear infinite;
+  box-shadow: 0 0 15px var(--primary);
+  z-index: 10;
 }

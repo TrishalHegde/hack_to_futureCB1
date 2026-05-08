@@ -34,9 +34,10 @@ class LLMService:
     async def extract_claim(self, text: str) -> Dict[str, Any]:
         prompt = f"""
         Extract the core falsifiable claim from the following text.
+        Also categorize the claim into one of: Politics, Health, Finance, Social, or General.
         Discard emojis, greetings, and personal opinions.
         Return ONLY a JSON object with this structure:
-        {{"claim": "string", "entities": ["string"], "timeframe": "string"}}
+        {{"claim": "string", "category": "string", "entities": ["string"], "timeframe": "string"}}
         
         Text: {text}
         """

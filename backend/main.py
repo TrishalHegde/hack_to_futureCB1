@@ -1,21 +1,29 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+import os
 
 load_dotenv()
 
-from models.domain import VerifyRequest, VerifyResponse, Source, ThreatCard
+from database import SessionLocal, engine, get_db, Base
+from models.db_models import ClaimRecord, EvidenceRecord
+from models.domain import VerifyRequest, VerifyResponse, Source, ThreatCard, RiskMetrics
 from services.nlp_service import NLPService
 from services.search_service import SearchService
 from services.llm_service import LLMService
 from services.stance_service import StanceService
+from services.risk_analyzer import RiskAnalyzer
 
-app = FastAPI(title="Anveshak AI API")
+# Create database tables
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="VAULTX Intelligence API")
 
 # Configure CORS for Vite frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For MVP
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,19 +32,21 @@ app.add_middleware(
 # Initialize Services
 search_service = SearchService()
 llm_service = LLMService()
-# Stance service will take a few seconds to load the model on first boot
 stance_service = StanceService()
+risk_analyzer = RiskAnalyzer()
 
 @app.post("/api/verify", response_model=VerifyResponse)
-async def verify_claim(request: VerifyRequest):
+async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
     raw_text = request.text
     
-    # 1. Translate to English using LLM (Handles Hinglish and other languages natively)
+    # 1. Translate & Linguistic Risk Analysis
     translated_text = await llm_service.translate_text(raw_text)
+    risk_report = risk_analyzer.analyze(translated_text)
     
-    # 2. Extract Claim
+    # 2. Extract Claim & Category
     extraction = await llm_service.extract_claim(translated_text)
     claim = extraction.get("claim", translated_text)
+    category = extraction.get("category", "General") # LLM should provide this
     
     # 3. Parallel Web Search
     search_results = await search_service.parallel_search(claim)
@@ -44,12 +54,11 @@ async def verify_claim(request: VerifyRequest):
     # 4. Evidence Synthesis
     synthesis = await llm_service.synthesize_evidence(claim, search_results)
     
-    # 5. Check Dissent
+    # 5. Stance & Dissent Check
     is_dissent = stance_service.is_legitimate_dissent(claim, raw_text)
     
     # Build Sources List
     sources = []
-    # Deduplicate urls
     seen_urls = set()
     for res in search_results:
         url = res.get("url", "")
@@ -65,19 +74,75 @@ async def verify_claim(request: VerifyRequest):
         )
         
     verdict = synthesis.get("verdict", "UNVERIFIABLE")
-    if is_dissent and verdict in ["FALSE", "LIKELY FALSE"]:
-        # The user might be criticizing a false claim rather than spreading it.
-        # But this is just MVP heuristic
-        pass
+    confidence = float(synthesis.get("confidence", 0.0))
+    
+    # 6. Persistence (VAULTX Database)
+    db_claim = ClaimRecord(
+        text=raw_text,
+        translated_text=translated_text,
+        verdict=verdict,
+        confidence=confidence,
+        risk_score=risk_report["risk_score"],
+        category=category
+    )
+    db.add(db_claim)
+    db.commit()
+    db.refresh(db_claim)
+    
+    # Save Evidence
+    for s in sources:
+        db_evidence = EvidenceRecord(
+            claim_id=db_claim.id,
+            url=s.url,
+            title=s.title,
+            snippet=s.title # Simplified
+        )
+        db.add(db_evidence)
+    db.commit()
+    
+    risk_metrics = RiskMetrics(
+        fear_level=risk_report["metrics"]["fear_level"],
+        urgency_level=risk_report["metrics"]["urgency_level"],
+        conspiracy_level=risk_report["metrics"]["conspiracy_level"],
+        total_risk_score=risk_report["risk_score"]
+    )
         
     return VerifyResponse(
         verdict=verdict,
-        confidence=float(synthesis.get("confidence", 0.0)),
+        confidence=confidence,
         reasoning=synthesis.get("reasoning", "Analysis complete."),
         translated_text=translated_text if translated_text != raw_text else None,
-        sources=sources[:5],  # Limit to top 5
+        category=category,
+        risk_metrics=risk_metrics,
+        sources=sources[:5],
         threat_card=threat_card
     )
+
+@app.get("/api/stats")
+async def get_stats(db: Session = Depends(get_db)):
+    # Mock stats for the dashboard metrics
+    total_claims = db.query(ClaimRecord).count()
+    risk_avg = db.query(ClaimRecord).with_entities(ClaimRecord.risk_score).all()
+    avg_risk = sum([r[0] for r in risk_avg]) / max(total_claims, 1)
+    
+    # Simple heatmap data
+    categories = db.query(ClaimRecord.category).distinct().all()
+    cat_counts = []
+    for (cat,) in categories:
+        count = db.query(ClaimRecord).filter(ClaimRecord.category == cat).count()
+        cat_counts.append({"name": cat, "value": count})
+        
+    return {
+        "total_claims": total_claims,
+        "average_risk": round(avg_risk, 2),
+        "system_health": "Optimal",
+        "category_distribution": cat_counts or [{"name": "General", "value": total_claims}]
+    }
+
+@app.get("/api/latest_claims")
+async def get_latest_claims(db: Session = Depends(get_db)):
+    claims = db.query(ClaimRecord).order_by(ClaimRecord.timestamp.desc()).limit(10).all()
+    return claims
 
 if __name__ == "__main__":
     import uvicorn

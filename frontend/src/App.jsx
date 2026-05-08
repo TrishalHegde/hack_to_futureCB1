@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { Home, LayoutDashboard, Settings, Activity, ShieldAlert, Zap } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CyberHero } from './components/CyberHero';
 import { InputSection } from './components/InputSection';
-import { VerdictDashboard } from './components/VerdictDashboard';
+import { IntelDashboard } from './components/IntelDashboard';
+import { AdminCenter } from './components/AdminCenter';
 import { verifyClaim } from './api';
 
 function App() {
+  const [activeTab, setActiveTab] = useState('home'); // home, admin
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -17,37 +21,99 @@ function App() {
       const data = await verifyClaim(text);
       setResult(data);
     } catch (err) {
-      setError("Failed to verify the claim. Please try again later.");
+      setError("Vault Connection Failed. AI Engine Offline.");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen py-10 px-4 md:px-8">
-      <header className="flex flex-col items-center mb-10">
-        <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-lg">
-          <ShieldCheck className="w-10 h-10 text-blue-300" />
-          <h1 className="text-3xl font-bold tracking-wide">Anveshak AI</h1>
-        </div>
-        <p className="mt-4 text-white/80 max-w-xl text-center">
-          Global Semantic Probe for verifying viral claims and suspicious media.
-        </p>
-      </header>
-
-      <main className="flex flex-col items-center w-full max-w-7xl mx-auto">
-        <InputSection onSubmit={handleVerify} isLoading={isLoading} />
-        
-        {error && (
-          <div className="mt-8 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-center w-full max-w-3xl">
-            {error}
+    <div className="flex min-h-screen bg-slate-950 text-slate-200">
+      {/* Sidebar */}
+      <aside className="w-20 lg:w-64 border-r border-white/5 flex flex-col items-center lg:items-start p-6 bg-slate-900/50 backdrop-blur-xl">
+        <div className="flex items-center gap-3 mb-12">
+          <div className="w-10 h-10 bg-cyan-500 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(0,242,255,0.4)]">
+            <Zap className="text-black w-6 h-6" />
           </div>
-        )}
+          <h1 className="hidden lg:block text-xl font-black uppercase tracking-tighter italic">VAULT<span className="text-cyan-500">X</span></h1>
+        </div>
 
-        {result && <VerdictDashboard result={result} />}
+        <nav className="flex-1 w-full space-y-4">
+          <NavButton active={activeTab === 'home'} icon={<Home size={20} />} label="Home" onClick={() => setActiveTab('home')} />
+          <NavButton active={activeTab === 'admin'} icon={<LayoutDashboard size={20} />} label="Admin" onClick={() => setActiveTab('admin')} />
+          <NavButton icon={<Activity size={20} />} label="Pulse" />
+          <NavButton icon={<ShieldAlert size={20} />} label="Threats" />
+        </nav>
+
+        <div className="mt-auto pt-6 border-t border-white/5 w-full">
+           <NavButton icon={<Settings size={20} />} label="Config" />
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <AnimatePresence mode="wait">
+          {activeTab === 'home' ? (
+            <motion.div 
+              key="home"
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="min-h-full"
+            >
+              <CyberHero />
+              
+              <div className="max-w-7xl mx-auto px-4 -mt-8 mb-20 relative z-10">
+                {!result && !isLoading ? (
+                  <div className="animate-in slide-in-from-bottom-10 duration-700">
+                    <InputSection onSubmit={handleVerify} isLoading={isLoading} />
+                  </div>
+                ) : (
+                  <IntelDashboard result={result} isLoading={isLoading} />
+                )}
+
+                {error && (
+                  <div className="mt-8 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-center font-bold tracking-widest uppercase text-xs animate-pulse">
+                    {error}
+                  </div>
+                )}
+
+                {result && !isLoading && (
+                   <div className="mt-12 flex justify-center">
+                      <button 
+                        onClick={() => setResult(null)}
+                        className="cyber-button"
+                      >
+                        Initiate New Scan
+                      </button>
+                   </div>
+                )}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div 
+              key="admin"
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+            >
+              <AdminCenter />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
 }
+
+const NavButton = ({ active, icon, label, onClick }) => (
+  <button 
+    onClick={onClick}
+    className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-300 ${active ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(0,242,255,0.1)]' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+  >
+    {icon}
+    <span className="hidden lg:block text-xs font-bold uppercase tracking-widest">{label}</span>
+  </button>
+);
 
 export default App;
