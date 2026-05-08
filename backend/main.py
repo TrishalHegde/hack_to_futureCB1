@@ -31,12 +31,12 @@ stance_service = StanceService()
 async def verify_claim(request: VerifyRequest):
     raw_text = request.text
     
-    # 1. Normalize and Transliterate
-    normalized_text = NLPService.normalize_text(raw_text)
+    # 1. Translate to English using LLM (Handles Hinglish and other languages natively)
+    translated_text = await llm_service.translate_text(raw_text)
     
     # 2. Extract Claim
-    extraction = await llm_service.extract_claim(normalized_text)
-    claim = extraction.get("claim", normalized_text)
+    extraction = await llm_service.extract_claim(translated_text)
+    claim = extraction.get("claim", translated_text)
     
     # 3. Parallel Web Search
     search_results = await search_service.parallel_search(claim)
@@ -74,6 +74,7 @@ async def verify_claim(request: VerifyRequest):
         verdict=verdict,
         confidence=float(synthesis.get("confidence", 0.0)),
         reasoning=synthesis.get("reasoning", "Analysis complete."),
+        translated_text=translated_text if translated_text != raw_text else None,
         sources=sources[:5],  # Limit to top 5
         threat_card=threat_card
     )

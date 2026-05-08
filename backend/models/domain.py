@@ -17,5 +17,6 @@ class VerifyResponse(BaseModel):
     verdict: str  # "TRUE", "LIKELY TRUE", "MIXED", "LIKELY FALSE", "FALSE", "UNVERIFIABLE"
     confidence: float
     reasoning: str
+    translated_text: Optional[str] = None
     sources: List[Source]
     threat_card: Optional[ThreatCard] = None

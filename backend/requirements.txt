@@ -7,3 +7,4 @@ indic-transliteration
 langdetect
 python-dotenv
 pydantic
+aiohttp

@@ -12,6 +12,25 @@ class LLMService:
         )
         self.model = "openai/gpt-4o-mini"
 
+    async def translate_text(self, text: str) -> str:
+        prompt = f"""
+        Translate the following text to clear, precise English.
+        If the text is Romanized Hindi ("Hinglish") or any other regional language, understand its context and translate its meaning to English.
+        If it is already in English, simply return the original text, fixing any obvious typos.
+        Return ONLY the translated English text, without any additional commentary.
+        
+        Text: {text}
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Error translating text: {e}")
+            return text
+
     async def extract_claim(self, text: str) -> Dict[str, Any]:
         prompt = f"""
         Extract the core falsifiable claim from the following text.
