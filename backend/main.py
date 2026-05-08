@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from services.search_service import SearchService
 from services.llm_service import LLMService
 from services.stance_service import StanceService
 from services.risk_analyzer import RiskAnalyzer
+from services.media_service import MediaService
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -34,6 +35,7 @@ search_service = SearchService()
 llm_service = LLMService()
 stance_service = StanceService()
 risk_analyzer = RiskAnalyzer()
+media_service = MediaService()
 
 @app.post("/api/verify", response_model=VerifyResponse)
 async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
@@ -143,6 +145,31 @@ async def get_stats(db: Session = Depends(get_db)):
 async def get_latest_claims(db: Session = Depends(get_db)):
     claims = db.query(ClaimRecord).order_by(ClaimRecord.timestamp.desc()).limit(10).all()
     return claims
+
+@app.post("/api/media/extract")
+async def extract_media_claim(file: UploadFile = FastAPIFile(...)):
+    """
+    Accepts an uploaded image, audio, or video file.
+    Uses Groq vision/Whisper to extract ONLY the core news claim from the media.
+    Returns { "claim": "..." }
+    """
+    file_bytes = await file.read()
+    content_type = file.content_type or ""
+    filename = file.filename or "upload"
+
+    try:
+        if content_type.startswith("image/"):
+            claim = await media_service.extract_claim_from_image(file_bytes, content_type)
+        elif content_type.startswith("audio/"):
+            claim = await media_service.extract_claim_from_audio(file_bytes, filename)
+        elif content_type.startswith("video/"):
+            claim = await media_service.extract_claim_from_video(file_bytes, filename)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Groq extraction failed: {str(e)}")
+
+    return {"claim": claim}
 
 if __name__ == "__main__":
     import uvicorn
