@@ -82,7 +82,7 @@ export const IntelDashboard = ({ result, isLoading }) => {
         <div className="lg:col-span-4 space-y-8">
           <div className="cyber-card">
             <h4 className="text-xs font-black uppercase tracking-[0.3em] text-slate-500 mb-8 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-magenta-500" /> Linguistic Risk Profile
+              <AlertTriangle className="w-4 h-4 text-fuchsia-500" /> Linguistic Risk Profile
             </h4>
             
             <div className="h-[250px] w-full">
@@ -115,8 +115,8 @@ export const IntelDashboard = ({ result, isLoading }) => {
 
           {/* Threat Card */}
           {threat_card && (
-            <div className="cyber-card border-magenta-500/20">
-              <div className="flex items-center gap-2 text-magenta-400 mb-6">
+            <div className="cyber-card border border-fuchsia-500/20">
+              <div className="flex items-center gap-2 text-fuchsia-400 mb-6">
                 <Fingerprint className="w-5 h-5" />
                 <h4 className="font-bold uppercase tracking-widest text-sm">Threat Attribution</h4>
               </div>

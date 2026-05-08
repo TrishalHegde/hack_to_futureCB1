@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Home, LayoutDashboard, Settings, Activity, ShieldAlert, Zap } from 'lucide-react';
+import { Home, LayoutDashboard, Settings, Activity, ShieldAlert, Zap, Fingerprint } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CyberHero } from './components/CyberHero';
 import { InputSection } from './components/InputSection';
 import { IntelDashboard } from './components/IntelDashboard';
 import { AdminCenter } from './components/AdminCenter';
+import { MediaForensicScanner } from './components/MediaForensicScanner';
 import { verifyClaim } from './api';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('home'); // home, admin
+  const [activeTab, setActiveTab] = useState('home'); // home, admin, forensics
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -40,6 +41,7 @@ function App() {
 
         <nav className="flex-1 w-full space-y-4">
           <NavButton active={activeTab === 'home'} icon={<Home size={20} />} label="Home" onClick={() => setActiveTab('home')} />
+          <NavButton active={activeTab === 'forensics'} icon={<Fingerprint size={20} />} label="Forensics" onClick={() => setActiveTab('forensics')} />
           <NavButton active={activeTab === 'admin'} icon={<LayoutDashboard size={20} />} label="Admin" onClick={() => setActiveTab('admin')} />
           <NavButton icon={<Activity size={20} />} label="Pulse" />
           <NavButton icon={<ShieldAlert size={20} />} label="Threats" />
@@ -89,6 +91,15 @@ function App() {
                    </div>
                 )}
               </div>
+            </motion.div>
+          ) : activeTab === 'forensics' ? (
+            <motion.div 
+              key="forensics"
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+            >
+              <MediaForensicScanner />
             </motion.div>
           ) : (
             <motion.div 
