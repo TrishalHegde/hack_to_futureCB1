@@ -41,25 +41,25 @@ media_service = MediaService()
 @app.post("/api/verify", response_model=VerifyResponse)
 async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
     raw_text = request.text
-    
+
     # 1. Translate & Linguistic Risk Analysis
     translated_text = await llm_service.translate_text(raw_text)
     risk_report = risk_analyzer.analyze(translated_text)
-    
+
     # 2. Extract Claim & Category
     extraction = await llm_service.extract_claim(translated_text)
     claim = extraction.get("claim", translated_text)
-    category = extraction.get("category", "General") # LLM should provide this
-    
+    category = extraction.get("category", "General")
+
     # 3. Parallel Web Search
     search_results = await search_service.parallel_search(claim)
-    
+
     # 4. Evidence Synthesis
     synthesis = await llm_service.synthesize_evidence(claim, search_results)
-    
+
     # 5. Stance & Dissent Check
     is_dissent = stance_service.is_legitimate_dissent(claim, raw_text)
-    
+
     # Build Sources List
     sources = []
     seen_urls = set()
@@ -68,18 +68,18 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
         if url and url not in seen_urls:
             sources.append(Source(url=url, title=res.get("title", "Source")))
             seen_urls.add(url)
-    
+
     threat_card = None
     if synthesis.get("threat_tactic") and synthesis.get("threat_tactic") != "None":
         threat_card = ThreatCard(
             tactic=synthesis.get("threat_tactic"),
             technique=synthesis.get("threat_technique", "Unknown")
         )
-        
+
     verdict = synthesis.get("verdict", "UNVERIFIABLE")
     confidence = float(synthesis.get("confidence", 0.0))
-    
-    # 6. Persistence (VAULTX Database)
+
+    # 6. Persistence
     db_claim = ClaimRecord(
         text=raw_text,
         translated_text=translated_text,
@@ -91,25 +91,24 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
     db.add(db_claim)
     db.commit()
     db.refresh(db_claim)
-    
-    # Save Evidence
+
     for s in sources:
         db_evidence = EvidenceRecord(
             claim_id=db_claim.id,
             url=s.url,
             title=s.title,
-            snippet=s.title # Simplified
+            snippet=s.title
         )
         db.add(db_evidence)
     db.commit()
-    
+
     risk_metrics = RiskMetrics(
         fear_level=risk_report["metrics"]["fear_level"],
         urgency_level=risk_report["metrics"]["urgency_level"],
         conspiracy_level=risk_report["metrics"]["conspiracy_level"],
         total_risk_score=risk_report["risk_score"]
     )
-        
+
     return VerifyResponse(
         verdict=verdict,
         confidence=confidence,
@@ -123,18 +122,16 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/stats")
 async def get_stats(db: Session = Depends(get_db)):
-    # Mock stats for the dashboard metrics
     total_claims = db.query(ClaimRecord).count()
     risk_avg = db.query(ClaimRecord).with_entities(ClaimRecord.risk_score).all()
     avg_risk = sum([r[0] for r in risk_avg]) / max(total_claims, 1)
-    
-    # Simple heatmap data
+
     categories = db.query(ClaimRecord.category).distinct().all()
     cat_counts = []
     for (cat,) in categories:
         count = db.query(ClaimRecord).filter(ClaimRecord.category == cat).count()
         cat_counts.append({"name": cat, "value": count})
-        
+
     return {
         "total_claims": total_claims,
         "average_risk": round(avg_risk, 2),
@@ -149,11 +146,6 @@ async def get_latest_claims(db: Session = Depends(get_db)):
 
 @app.post("/api/media/extract")
 async def extract_media_claim(file: UploadFile = FastAPIFile(...)):
-    """
-    Accepts an uploaded image, audio, or video file.
-    Uses Groq vision/Whisper to extract ONLY the core news claim from the media.
-    Returns { "claim": "..." }
-    """
     file_bytes = await file.read()
     content_type = file.content_type or ""
     filename = file.filename or "upload"
@@ -177,14 +169,9 @@ class URLRequest(BaseModel):
 
 @app.post("/api/media/extract-url")
 async def extract_url_claim(body: URLRequest):
-    """
-    Accepts a YouTube / news video URL.
-    Downloads audio via yt-dlp, transcribes with Whisper, extracts core claim.
-    Returns { "claim": "..." }
-    """
     url = body.url.strip()
     if not url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Invalid URL — must start with http:// or https://")
+        raise HTTPException(status_code=400, detail="Invalid URL")
     try:
         claim = await media_service.extract_claim_from_url(url)
     except Exception as e:
