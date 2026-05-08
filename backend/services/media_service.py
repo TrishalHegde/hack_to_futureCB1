@@ -3,6 +3,31 @@ import base64
 import io
 from groq import Groq
 
+# Strict extraction system prompt — NEVER evaluates truth, ONLY extracts the claim as-is
+_EXTRACT_SYSTEM = """You are a claim extraction tool. Your ONLY job is to rephrase the core news claim being made in the content into a short, neutral, declarative sentence.
+
+STRICT RULES:
+- Do NOT fact-check, evaluate, or say whether the claim is true or false.
+- Do NOT add phrases like "it is false that..." or "there is no evidence that..."
+- Do NOT add your own opinion or knowledge.
+- Return the claim EXACTLY as it is being asserted in the content, reworded as a simple news statement.
+- Maximum 1-2 sentences.
+- If the content says "Modi is dead", you return: "Prime Minister Narendra Modi has died."
+- If the content says "WhatsApp is being banned", you return: "WhatsApp is being banned in India."
+- Never refuse. Always return the claim as stated."""
+
+_EXTRACT_IMAGE_PROMPT = """Look at this image and find the main news claim or headline being asserted.
+
+STRICT RULES:
+- Do NOT fact-check or say whether it is true or false.
+- Do NOT add phrases like "it is false that..." or "there is no evidence that..."  
+- Simply rephrase what the image is CLAIMING as a short declarative sentence.
+- Return ONLY 1-2 sentences. No preamble. No explanation.
+- Example: If image says "MODI DEAD", return: "Prime Minister Narendra Modi has died."
+- Example: If image says "WhatsApp banned", return: "WhatsApp has been banned in India."
+"""
+
+
 class MediaService:
     def __init__(self):
         self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -12,8 +37,8 @@ class MediaService:
 
     async def extract_claim_from_image(self, file_bytes: bytes, mime_type: str) -> str:
         """
-        Uses Groq vision (llama-4-scout) to extract ONLY the main news claim
-        from an uploaded image such as a meme or viral screenshot.
+        Uses Groq vision (llama-4-scout) to extract the raw claim being made
+        in the image WITHOUT evaluating truth/falsity.
         """
         b64 = self._image_to_base64(file_bytes, mime_type)
 
@@ -25,74 +50,53 @@ class MediaService:
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64}"
-                            }
+                            "image_url": {"url": f"data:{mime_type};base64,{b64}"}
                         },
                         {
                             "type": "text",
-                            "text": (
-                                "Look at this image carefully. "
-                                "Extract ONLY the main factual claim or news headline from the text in this image. "
-                                "Do NOT include any explanations, source names, hashtags, or opinions. "
-                                "Return ONLY 1-2 sentences that represent the core verifiable claim being made. "
-                                "If there are multiple claims, pick the most significant one. "
-                                "Example format: 'The government has mandated that WhatsApp must be linked to an active SIM card.'"
-                            )
+                            "text": _EXTRACT_IMAGE_PROMPT
                         }
                     ]
                 }
             ],
-            max_tokens=150,
-            temperature=0.1,
+            max_tokens=100,
+            temperature=0.0,
         )
 
         return response.choices[0].message.content.strip()
 
     async def extract_claim_from_audio(self, file_bytes: bytes, filename: str) -> str:
         """
-        Uses Groq Whisper to transcribe audio and then extracts the main claim.
+        Uses Groq Whisper to transcribe audio, then extracts the raw claim
+        WITHOUT evaluating whether it is true or false.
         """
-        # Step 1: Transcribe with Whisper
+        # Step 1: Transcribe
         transcription = self.client.audio.transcriptions.create(
             file=(filename, io.BytesIO(file_bytes)),
             model="whisper-large-v3",
             response_format="text",
             language="en",
         )
-
         transcript_text = transcription if isinstance(transcription, str) else transcription.text
 
-        # Step 2: Extract main claim from transcript
+        # Step 2: Extract claim — strictly no fact-checking
         response = self.client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an expert at extracting core factual claims from spoken content. "
-                        "Extract ONLY the single most important verifiable news claim. "
-                        "Return 1-2 sentences maximum. No preambles, no explanations."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"Transcript: {transcript_text}"
-                }
+                {"role": "system", "content": _EXTRACT_SYSTEM},
+                {"role": "user", "content": f"Content: {transcript_text}"}
             ],
-            max_tokens=120,
-            temperature=0.1,
+            max_tokens=80,
+            temperature=0.0,
         )
 
-        main_claim = response.choices[0].message.content.strip()
-        return main_claim
+        return response.choices[0].message.content.strip()
 
     async def extract_claim_from_video(self, file_bytes: bytes, filename: str) -> str:
         """
-        For video, we extract the audio track and process via Whisper.
-        Falls back to a descriptive message if extraction fails.
+        Transcribes video audio via Whisper, then extracts the raw claim
+        WITHOUT evaluating whether it is true or false.
         """
-        # Groq Whisper can handle mp4/webm audio streams directly
         try:
             transcription = self.client.audio.transcriptions.create(
                 file=(filename, io.BytesIO(file_bytes)),
@@ -104,17 +108,11 @@ class MediaService:
             response = self.client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Extract ONLY the single most important verifiable news claim from this video transcript. "
-                            "Return 1-2 sentences maximum. No preambles."
-                        )
-                    },
-                    {"role": "user", "content": transcript_text}
+                    {"role": "system", "content": _EXTRACT_SYSTEM},
+                    {"role": "user", "content": f"Content: {transcript_text}"}
                 ],
-                max_tokens=120,
-                temperature=0.1,
+                max_tokens=80,
+                temperature=0.0,
             )
             return response.choices[0].message.content.strip()
 
