@@ -1,447 +1,253 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Upload, X, Terminal, Fingerprint, Activity,
-  AlertTriangle, CheckCircle, Search, Loader2,
-  FileWarning, Clock, HardDrive, Tag, Sparkles, RefreshCw, Info, Link2
+import { 
+  FileSearch, 
+  Upload, 
+  Image as ImageIcon, 
+  FileAudio, 
+  Video, 
+  Loader2, 
+  CheckCircle2, 
+  AlertCircle,
+  Fingerprint,
+  Zap,
+  ShieldCheck,
+  Search
 } from 'lucide-react';
-import exifr from 'exifr';
-import axios from 'axios';
-import { verifyClaim } from '../api';
-
-const API_BASE = 'http://localhost:8000';
-
-const formatBytes = (bytes) => {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-};
+import { extractMediaClaim, verifyClaim } from '../api';
+import { IntelDashboard } from './IntelDashboard';
+import { VerdictDashboard } from './VerdictDashboard';
 
 export const MediaForensicScanner = () => {
-  const [inputMode, setInputMode]       = useState('file'); // 'file' | 'url'
-  const [urlInput, setUrlInput]         = useState('');
-  const [isUrlLoading, setUrlLoad]      = useState(false);
-  const [urlError, setUrlError]         = useState(null);
-  const [file, setFile]                 = useState(null);
-  const [preview, setPreview]           = useState(null);
-  const [isHovering, setHover]          = useState(false);
-  const [exifData, setExifData]         = useState(null);
-  const [isExtracting, setExtracting]   = useState(false);
-  const [claimText, setClaimText]       = useState('');
-  const [extractError, setExtractError] = useState(null);
-  const [isVerifying, setVerifying]     = useState(false);
-  const [verifyResult, setVerifyResult] = useState(null);
-  const [verifyError, setVerifyError]   = useState(null);
+  const [file, setFile] = useState(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [extractedClaim, setExtractedClaim] = useState('');
+  const [verificationResult, setVerificationResult] = useState(null);
+  const [error, setError] = useState(null);
+  const fileInputRef = useRef(null);
 
-  // ── File selected ─────────────────────────────────────────────────────
-  const handleFile = async (selectedFile) => {
-    if (!selectedFile) return;
-    setFile(selectedFile);
-    setExifData(null); setClaimText(''); setVerifyResult(null);
-    setVerifyError(null); setExtractError(null);
-
-    if (selectedFile.type.startsWith('image/')) {
-      setPreview(URL.createObjectURL(selectedFile));
-    } else {
-      setPreview(null);
-    }
-
-    // Passive EXIF — info only
-    exifr.parse(selectedFile, { pick: ['Make', 'Model', 'DateTimeOriginal', 'Software', 'GPSLatitude', 'GPSLongitude'] })
-      .then(exif => setExifData(exif || {})).catch(() => setExifData({}));
-
-    // Groq auto-extraction
-    setExtracting(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', selectedFile);
-      const res = await axios.post(`${API_BASE}/api/media/extract`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      setClaimText(res.data.claim || '');
-    } catch {
-      setExtractError('Groq could not read this file. Type the claim manually below.');
-    } finally {
-      setExtracting(false);
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setExtractedClaim('');
+      setVerificationResult(null);
+      setError(null);
     }
   };
 
-  const reExtract = async () => {
-    if (!file || file._isUrl) return;
-    setExtracting(true); setExtractError(null);
-    try {
-      const fd = new FormData(); fd.append('file', file);
-      const res = await axios.post(`${API_BASE}/api/media/extract`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setClaimText(res.data.claim || '');
-    } catch { setExtractError('Re-extraction failed. Type the claim manually.'); }
-    finally { setExtracting(false); }
-  };
+  const handleUpload = async () => {
+    if (!file) return;
 
-  // ── URL submission ─────────────────────────────────────────────────────
-  const handleUrl = async () => {
-    const url = urlInput.trim();
-    if (!url) return;
-    setUrlError(null); setClaimText(''); setVerifyResult(null); setVerifyError(null);
-    setUrlLoad(true);
+    setIsExtracting(true);
+    setError(null);
     try {
-      const res = await axios.post(`${API_BASE}/api/media/extract-url`, { url });
-      setClaimText(res.data.claim || '');
-      setFile({ name: url, size: 0, lastModified: Date.now(), type: 'url', _isUrl: true });
+      const data = await extractMediaClaim(file);
+      setExtractedClaim(data.claim);
     } catch (err) {
-      setUrlError(err?.response?.data?.detail || 'URL extraction failed. Try a direct video link.');
+      setError('Neural Extraction Failed. The file format might be corrupted or unsupported.');
+      console.error(err);
     } finally {
-      setUrlLoad(false);
+      setIsExtracting(false);
     }
   };
 
-  // ── Verify ─────────────────────────────────────────────────────────────
   const handleVerify = async () => {
-    if (!claimText.trim()) return;
-    setVerifying(true); setVerifyError(null); setVerifyResult(null);
+    if (!extractedClaim) return;
+
+    setIsVerifying(true);
     try {
-      const data = await verifyClaim(claimText);
-      setVerifyResult(data);
-    } catch { setVerifyError('AI Engine unreachable. Ensure the backend is running.'); }
-    finally { setVerifying(false); }
+      const data = await verifyClaim(extractedClaim);
+      setVerificationResult(data);
+    } catch (err) {
+      setError('Vault Connection Interrupted during Deep Verification.');
+      console.error(err);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
-  const reset = () => {
-    setFile(null); setPreview(null); setExifData(null);
-    setClaimText(''); setVerifyResult(null); setVerifyError(null);
-    setExtractError(null); setUrlInput(''); setUrlError(null);
+  const resetScanner = () => {
+    setFile(null);
+    setExtractedClaim('');
+    setVerificationResult(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-10 space-y-8">
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-cyan-500/10 rounded-2xl flex items-center justify-center border border-cyan-500/30">
-            <Fingerprint className="text-cyan-400 w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-3xl font-black uppercase tracking-tighter italic text-white">
-              Multimodal <span className="text-cyan-400">Forensics</span>
-            </h2>
-            <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] font-bold">
-              Upload media or paste a URL → AI extracts claim → Verify globally
-            </p>
+  if (verificationResult) {
+    return (
+      <div className="pt-8">
+        <div className="max-w-7xl mx-auto px-4 mb-8 flex justify-between items-center">
+          <button 
+            onClick={() => setVerificationResult(null)}
+            className="text-cyan-500 font-bold uppercase tracking-widest text-xs flex items-center gap-2 hover:text-cyan-400 transition-colors"
+          >
+            ← Back to Extraction
+          </button>
+          <div className="px-4 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-widest">
+            Verification Protocol Alpha-7
           </div>
         </div>
-        {file && (
-          <button onClick={reset} className="p-3 text-slate-500 hover:text-red-400 transition-colors">
-            <X size={20} />
-          </button>
-        )}
+        <VerdictDashboard result={verificationResult} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-12">
+      <div className="text-center mb-12">
+        <motion.div 
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="inline-flex p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 mb-6"
+        >
+          <Fingerprint className="w-12 h-12 text-cyan-500" />
+        </motion.div>
+        <h2 className="text-4xl font-black uppercase tracking-tighter italic mb-4">
+          Media <span className="text-cyan-500">Forensics</span>
+        </h2>
+        <p className="text-slate-400 font-medium tracking-wide">
+          Upload images, audio, or video for multi-modal claim extraction and neural truth verification.
+        </p>
       </div>
 
-      {/* ── INPUT ZONE ── */}
-      {!file && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-
-          {/* Tab Switcher */}
-          <div className="flex gap-2 p-1 bg-slate-900/60 border border-white/5 rounded-2xl w-fit">
-            {[
-              { mode: 'file', icon: <Upload size={13} />, label: 'Upload File' },
-              { mode: 'url',  icon: <Link2 size={13} />,  label: 'Video URL'   },
-            ].map(({ mode, icon, label }) => (
-              <button
-                key={mode}
-                onClick={() => setInputMode(mode)}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                  inputMode === mode
-                    ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
-                    : 'text-slate-500 hover:text-slate-300'
-                }`}
-              >
-                {icon} {label}
-              </button>
-            ))}
-          </div>
-
-          {/* File Drop */}
-          {inputMode === 'file' && (
-            <div
-              onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-              onDragOver={(e) => { e.preventDefault(); setHover(true); }}
-              onDragLeave={() => setHover(false)}
-              onDrop={(e) => { e.preventDefault(); setHover(false); handleFile(e.dataTransfer.files[0]); }}
-              className={`border-2 border-dashed rounded-3xl p-20 flex flex-col items-center justify-center transition-all duration-500 ${
-                isHovering ? 'border-cyan-400 bg-cyan-400/5 shadow-[0_0_60px_rgba(34,211,238,0.12)]' : 'border-slate-800 bg-slate-900/30'
-              }`}
-            >
-              <Upload className={`w-14 h-14 mb-5 transition-colors duration-500 ${isHovering ? 'text-cyan-400' : 'text-slate-600'}`} />
-              <h3 className="text-xl font-bold text-slate-200 mb-2">Drop Viral Media Here</h3>
-              <p className="text-slate-500 text-sm mb-1 text-center">Memes · Screenshots · News images · Audio · Video</p>
-              <p className="text-slate-600 text-[10px] font-mono mb-8 uppercase tracking-widest">
-                Groq AI reads the claim — verdict from global sources
-              </p>
-              <label className="cyber-button cursor-pointer">
-                <Upload className="w-4 h-4" /> Select File
-                <input type="file" className="hidden" accept="image/*,audio/*,video/*" onChange={(e) => handleFile(e.target.files[0])} />
-              </label>
-            </div>
-          )}
-
-          {/* URL Input */}
-          {inputMode === 'url' && (
-            <div className="cyber-card border-t-2 border-t-cyan-500/50 space-y-5">
-              <div className="flex items-center gap-3">
-                <Link2 className="text-cyan-400 w-5 h-5" />
-                <div>
-                  <h3 className="text-white font-black uppercase tracking-wider text-sm">Paste Video / News Link</h3>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-widest mt-0.5">YouTube · Twitter/X · Instagram · Direct MP4</p>
+      <div className="grid grid-cols-1 gap-8">
+        {/* Upload Panel */}
+        <motion.div 
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="cyber-card relative overflow-hidden group"
+        >
+          {isExtracting && <div className="scanner-line" />}
+          
+          <div className="flex flex-col items-center justify-center py-12 px-6 border-2 border-dashed border-white/5 rounded-2xl group-hover:border-cyan-500/30 transition-colors">
+            {!file ? (
+              <>
+                <div className="flex gap-4 mb-6">
+                  <ImageIcon className="w-8 h-8 text-slate-600" />
+                  <FileAudio className="w-8 h-8 text-slate-600" />
+                  <Video className="w-8 h-8 text-slate-600" />
                 </div>
-              </div>
-
-              <div className="flex gap-3">
-                <input
-                  type="url"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleUrl()}
-                  placeholder="https://youtube.com/watch?v=..."
-                  className="cyber-input !min-h-0 py-3 flex-1 text-sm"
+                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs mb-6">
+                  Drop evidence here or click to browse
+                </p>
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  className="hidden" 
+                  accept="image/*,audio/*,video/*"
+                  id="forensic-upload"
                 />
-                <button
-                  onClick={handleUrl}
-                  disabled={!urlInput.trim() || isUrlLoading}
-                  className="cyber-button px-6 shrink-0"
+                <label 
+                  htmlFor="forensic-upload"
+                  className="cyber-button cursor-pointer"
                 >
-                  {isUrlLoading ? <><Loader2 className="animate-spin w-4 h-4" /> Fetching...</> : <><Search className="w-4 h-4" /> Analyze</>}
-                </button>
-              </div>
-
-              {isUrlLoading && (
-                <div className="flex items-center gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
-                  <Loader2 className="animate-spin text-cyan-400 w-5 h-5 shrink-0" />
-                  <div>
-                    <p className="text-cyan-300 font-bold text-sm">Downloading & transcribing video...</p>
-                    <p className="text-slate-500 text-xs mt-0.5">yt-dlp → Groq Whisper → Claim extraction</p>
+                  <Upload size={16} /> Select Source File
+                </label>
+              </>
+            ) : (
+              <div className="w-full">
+                <div className="flex items-center gap-4 p-4 bg-white/5 rounded-xl border border-white/10 mb-8">
+                  <div className="p-3 bg-cyan-500/20 rounded-lg">
+                    {file.type.startsWith('image/') && <ImageIcon className="text-cyan-400" />}
+                    {file.type.startsWith('audio/') && <FileAudio className="text-cyan-400" />}
+                    {file.type.startsWith('video/') && <Video className="text-cyan-400" />}
                   </div>
+                  <div className="flex-1 overflow-hidden">
+                    <p className="font-bold text-slate-200 truncate">{file.name}</p>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-widest">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB • {file.type}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={resetScanner}
+                    className="p-2 hover:bg-white/10 rounded-lg text-slate-500 transition-colors"
+                  >
+                    ×
+                  </button>
                 </div>
-              )}
 
-              {urlError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs font-bold uppercase tracking-widest">{urlError}</div>
-              )}
-            </div>
-          )}
-        </motion.div>
-      )}
-
-      {/* ── MAIN ANALYSIS PANEL ── */}
-      {file && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-
-          {/* LEFT: Preview + File Info */}
-          <div className="lg:col-span-5 space-y-6">
-            {preview && (
-              <div className="cyber-card p-0 overflow-hidden rounded-2xl">
-                <img src={preview} alt="Uploaded" className="w-full object-contain max-h-[320px]" />
-              </div>
-            )}
-
-            {!file._isUrl && (
-              <div className="cyber-card border-t-2 border-t-slate-600/50">
-                <div className="flex items-center gap-2 mb-5 text-slate-400">
-                  <Terminal className="w-4 h-4" />
-                  <h4 className="font-black uppercase tracking-widest text-xs">File Information</h4>
-                </div>
-                <div className="space-y-3 font-mono text-[11px] text-slate-400">
-                  <MetaRow icon={<Tag size={10}/>}       label="NAME"     value={file.name} />
-                  <MetaRow icon={<HardDrive size={10}/>} label="SIZE"     value={formatBytes(file.size)} />
-                  <MetaRow icon={<Clock size={10}/>}     label="MODIFIED" value={new Date(file.lastModified).toUTCString()} />
-                  {exifData?.Make && <MetaRow label="CAMERA"   value={`${exifData.Make} ${exifData.Model || ''}`.trim()} />}
-                  {exifData?.Software && <MetaRow label="SOFTWARE" value={exifData.Software} />}
-                </div>
-                <div className="mt-5 pt-4 border-t border-white/5 flex items-start gap-2 text-slate-500">
-                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-cyan-500/60" />
-                  <p className="text-[10px] leading-relaxed">
-                    File metadata does <span className="text-white font-bold">not</span> determine truth.
-                    Verdict comes solely from <span className="text-cyan-400 font-bold">AI claim verification</span>.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {file._isUrl && (
-              <div className="cyber-card border-t-2 border-t-cyan-500/50">
-                <div className="flex items-center gap-2 mb-3 text-cyan-400">
-                  <Link2 className="w-4 h-4" />
-                  <h4 className="font-black uppercase tracking-widest text-xs">Source URL</h4>
-                </div>
-                <p className="text-slate-400 text-xs font-mono break-all">{file.name}</p>
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT: Claim + Verify */}
-          <div className="lg:col-span-7 space-y-6">
-
-            {/* Claim Box */}
-            <div className="cyber-card border-t-2 border-t-cyan-500/50">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-cyan-400">
-                  <Sparkles className="w-4 h-4" />
-                  <h4 className="font-black uppercase tracking-widest text-xs">Groq AI · Extracted Claim</h4>
-                </div>
-                {!isExtracting && !file._isUrl && (
-                  <button onClick={reExtract} className="p-1.5 text-slate-500 hover:text-cyan-400 transition-colors" title="Re-extract">
-                    <RefreshCw size={14} />
+                {!extractedClaim && (
+                  <button 
+                    onClick={handleUpload}
+                    disabled={isExtracting}
+                    className="cyber-button w-full py-4 text-sm"
+                  >
+                    {isExtracting ? (
+                      <><Loader2 className="animate-spin" size={18} /> Initializing Neural Extraction...</>
+                    ) : (
+                      <><Zap size={18} /> Start Forensic Analysis</>
+                    )}
                   </button>
                 )}
               </div>
-
-              {isExtracting ? (
-                <div className="flex items-center gap-3 p-5 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
-                  <Loader2 className="animate-spin text-cyan-400 w-5 h-5 shrink-0" />
-                  <div>
-                    <p className="text-cyan-300 font-bold text-sm">Reading media with Groq Vision...</p>
-                    <p className="text-slate-500 text-xs mt-0.5">Extracting only the core verifiable claim</p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {extractError && <p className="text-amber-400 text-xs font-bold mb-3 uppercase tracking-widest">{extractError}</p>}
-                  {claimText && <p className="text-[9px] text-cyan-500 font-black uppercase tracking-widest mb-2">✦ Auto-extracted — edit if needed</p>}
-                  <textarea
-                    value={claimText}
-                    onChange={(e) => setClaimText(e.target.value)}
-                    placeholder="AI will extract the claim automatically..."
-                    className="cyber-input min-h-[130px] text-base leading-relaxed"
-                  />
-                </>
-              )}
-            </div>
-
-            {/* Verify Button */}
-            {!verifyResult && (
-              <div className="space-y-3">
-                {verifyError && <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs font-bold uppercase tracking-widest">{verifyError}</div>}
-                <button
-                  onClick={handleVerify}
-                  disabled={!claimText.trim() || isVerifying || isExtracting}
-                  className="cyber-button w-full justify-center py-4"
-                >
-                  {isVerifying ? <><Loader2 className="animate-spin w-4 h-4" /> Probing Global Sources...</> : <><Search className="w-4 h-4" /> Verify This Claim</>}
-                </button>
-              </div>
             )}
-
-            {/* Scanning */}
-            <AnimatePresence>
-              {isVerifying && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="cyber-card relative py-16 text-center overflow-hidden">
-                  <div className="scanner-line" />
-                  <div className="relative z-10 space-y-4">
-                    <Activity className="w-12 h-12 text-cyan-400 mx-auto animate-pulse" />
-                    <h3 className="text-lg font-black text-cyan-400 uppercase tracking-[0.3em]">Neural Probe Active</h3>
-                    <p className="text-xs text-slate-500 uppercase tracking-widest animate-pulse">Cross-referencing global intelligence sources...</p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Results */}
-            <AnimatePresence>
-              {verifyResult && !isVerifying && (
-                <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-
-                  {/* Verdict Card */}
-                  <div className={`cyber-card border-l-8 ${getVerdictBorder(verifyResult.verdict)}`}>
-                    <div className="flex items-center gap-6 mb-5 pb-5 border-b border-white/5">
-                      {getVerdictIcon(verifyResult.verdict)}
-                      <div className="flex-1">
-                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-[0.4em] mb-1">AI Verdict</p>
-                        <h3 className={`text-5xl font-black uppercase tracking-tighter ${getVerdictColor(verifyResult.verdict)}`}>{verifyResult.verdict}</h3>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Confidence</p>
-                        <p className={`text-4xl font-black ${getVerdictColor(verifyResult.verdict)}`}>{Math.round(verifyResult.confidence * 100)}%</p>
-                      </div>
-                    </div>
-                    <p className="text-slate-300 text-base italic leading-relaxed">"{verifyResult.reasoning}"</p>
-                  </div>
-
-                  {/* Linguistic Risk */}
-                  {verifyResult.risk_metrics && (
-                    <div className="cyber-card">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-5 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-fuchsia-500" /> Linguistic Risk Profile
-                      </p>
-                      <div className="space-y-4">
-                        {[
-                          { label: 'Fear Language',         value: verifyResult.risk_metrics.fear_level,       color: '#f87171' },
-                          { label: 'Urgency Patterns',      value: verifyResult.risk_metrics.urgency_level,    color: '#fbbf24' },
-                          { label: 'Conspiracy Indicators', value: verifyResult.risk_metrics.conspiracy_level, color: '#c084fc' },
-                        ].map(item => (
-                          <div key={item.label}>
-                            <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest mb-1">
-                              <span className="text-slate-400">{item.label}</span>
-                              <span style={{ color: item.color }}>{item.value}%</span>
-                            </div>
-                            <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                              <motion.div
-                                initial={{ width: 0 }} animate={{ width: `${item.value}%` }}
-                                transition={{ duration: 1, ease: 'easeOut' }}
-                                className="h-full rounded-full"
-                                style={{ background: item.color, boxShadow: `0 0 8px ${item.color}80` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Sources */}
-                  {verifyResult.sources?.length > 0 && (
-                    <div className="cyber-card">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Evidence Sources ({verifyResult.sources.length})</p>
-                      <div className="space-y-2">
-                        {verifyResult.sources.map((src, i) => (
-                          <a key={i} href={src.url} target="_blank" rel="noreferrer"
-                            className="flex items-start gap-3 p-3 bg-slate-950/60 hover:bg-slate-800/60 border border-white/5 hover:border-cyan-500/30 rounded-xl transition-all group"
-                          >
-                            <span className="text-cyan-500 font-black text-xs mt-0.5 shrink-0">{i + 1}</span>
-                            <div className="overflow-hidden">
-                              <p className="text-slate-200 font-semibold text-sm line-clamp-1 group-hover:text-cyan-300 transition-colors">{src.title}</p>
-                              <p className="text-[10px] text-slate-500 truncate font-mono">{src.url}</p>
-                            </div>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-4">
-                    <button onClick={() => setVerifyResult(null)} className="cyber-button flex-1 justify-center">← Edit & Re-verify</button>
-                    <button onClick={reset} className="cyber-button flex-1 justify-center">New Scan</button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         </motion.div>
-      )}
+
+        {/* Extraction Result */}
+        <AnimatePresence>
+          {extractedClaim && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="space-y-6"
+            >
+              <div className="cyber-card border-l-4 border-l-cyan-500 bg-cyan-500/5">
+                <div className="flex items-center gap-3 mb-4 text-cyan-400">
+                  <ShieldCheck size={20} />
+                  <h4 className="font-black uppercase tracking-widest text-xs">Extracted Intelligence Claim</h4>
+                </div>
+                <p className="text-xl text-slate-200 font-light italic leading-relaxed">
+                  "{extractedClaim}"
+                </p>
+              </div>
+
+              <div className="flex gap-4">
+                <button 
+                  onClick={handleVerify}
+                  disabled={isVerifying}
+                  className="flex-1 cyber-button py-4 border-cyan-500 bg-cyan-500/20 text-cyan-400"
+                >
+                  {isVerifying ? (
+                    <><Loader2 className="animate-spin" /> Verifying with Vault Core...</>
+                  ) : (
+                    <><Search size={18} /> Perform Deep Truth Scan</>
+                  )}
+                </button>
+                <button 
+                  onClick={resetScanner}
+                  className="px-6 border border-white/10 rounded-xl text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all uppercase text-[10px] font-black tracking-widest"
+                >
+                  Discard
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3 text-red-400"
+          >
+            <AlertCircle size={20} />
+            <span className="text-xs font-bold uppercase tracking-widest">{error}</span>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Decorative Grid */}
+      <div className="mt-20 grid grid-cols-3 gap-4 opacity-20">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="h-1 bg-gradient-to-right from-transparent via-slate-700 to-transparent" />
+        ))}
+      </div>
     </div>
   );
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-const MetaRow = ({ icon, label, value }) => (
-  <div className="flex justify-between items-start gap-2 border-b border-white/5 pb-2 last:border-0">
-    <span className="flex items-center gap-1.5 text-slate-500 shrink-0 uppercase tracking-wider">{icon} {label}</span>
-    <span className="font-bold text-right break-all text-cyan-300">{value || 'N/A'}</span>
-  </div>
-);
-
-const getVerdictColor  = (v = '') => v.includes('TRUE') ? 'text-lime-400' : v.includes('FALSE') ? 'text-red-400' : v.includes('MIXED') ? 'text-amber-400' : 'text-slate-400';
-const getVerdictBorder = (v = '') => v.includes('TRUE') ? 'border-lime-500' : v.includes('FALSE') ? 'border-red-500' : v.includes('MIXED') ? 'border-amber-500' : 'border-slate-500';
-const getVerdictIcon   = (v = '') => {
-  if (v.includes('TRUE'))  return <CheckCircle   className="w-12 h-12 text-lime-400  shrink-0" />;
-  if (v.includes('FALSE')) return <FileWarning   className="w-12 h-12 text-red-400   shrink-0" />;
-  if (v.includes('MIXED')) return <AlertTriangle className="w-12 h-12 text-amber-400 shrink-0" />;
-  return <Activity className="w-12 h-12 text-slate-400 shrink-0" />;
 };

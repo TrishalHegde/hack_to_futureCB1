@@ -1,285 +1,209 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import { ShieldAlert, Globe, Zap, TrendingUp } from 'lucide-react';
+import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
+import { BotActivityCard } from './ThreatsExtensions';
 
-// ─── SVG Arc Gauge ─────────────────────────────────────────────────────────
-const ArcGauge = ({ value = 0, size = 180, label = '', sublabel = '' }) => {
-  const r = size * 0.38;
-  const cx = size / 2;
-  const cy = size / 2 + size * 0.05;
-  const startAngle = -210;
-  const totalAngle = 240;
-  const angle = startAngle + (value / 100) * totalAngle;
-  const toRad = (deg) => (deg * Math.PI) / 180;
+const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
-  const arcPath = (start, end, radius) => {
-    const s = { x: cx + radius * Math.cos(toRad(start)), y: cy + radius * Math.sin(toRad(start)) };
-    const e = { x: cx + radius * Math.cos(toRad(end)),   y: cy + radius * Math.sin(toRad(end)) };
-    const large = Math.abs(end - start) > 180 ? 1 : 0;
-    return `M ${s.x} ${s.y} A ${radius} ${radius} 0 ${large} 1 ${e.x} ${e.y}`;
+// ─── Base hotspot data (claims + risk updated from API) ─────────────────────
+const BASE_HOTSPOTS = [
+  { name: 'India',      coordinates: [78.9629, 20.5937],  baseClaims: 1204, lang: 'Hindi',       riskWeight: 1.0 },
+  { name: 'USA',        coordinates: [-95.7129, 37.0902], baseClaims: 876,  lang: 'English',     riskWeight: 0.7 },
+  { name: 'Brazil',     coordinates: [-51.9253, -14.235], baseClaims: 643,  lang: 'Portuguese',  riskWeight: 0.7 },
+  { name: 'Pakistan',   coordinates: [69.3451, 30.3753],  baseClaims: 512,  lang: 'Urdu',        riskWeight: 0.9 },
+  { name: 'Nigeria',    coordinates: [8.6753, 9.0820],    baseClaims: 401,  lang: 'English',     riskWeight: 0.85 },
+  { name: 'Indonesia',  coordinates: [113.9213, -0.7893], baseClaims: 338,  lang: 'Bahasa',      riskWeight: 0.65 },
+  { name: 'Russia',     coordinates: [105.3188, 61.524],  baseClaims: 289,  lang: 'Russian',     riskWeight: 0.5 },
+  { name: 'Bangladesh', coordinates: [90.3563, 23.685],   baseClaims: 221,  lang: 'Bangla',      riskWeight: 0.9 },
+];
+
+// ─── ThreatDot — DO NOT MODIFY ───────────────────────────────────────────────
+const ThreatDot = ({ coordinates, claims, name, lang, risk }) => {
+  const [hovered, setHovered] = useState(false);
+  const r = 4 + (claims / 400);
+  const color = '#00f5d4';
+
+  return (
+    <Marker coordinates={coordinates} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <circle r={r * 2} fill={color} opacity={0.15} className="animate-ping" />
+      <circle r={r} fill={color} opacity={0.9} style={{ cursor: 'pointer', filter: `drop-shadow(0 0 8px ${color})` }} />
+      {hovered && (
+        <g transform="translate(0, -10)">
+          <foreignObject x="-80" y="-80" width="160" height="80" style={{ overflow: 'visible', pointerEvents: 'none' }}>
+            <div style={{
+              background: '#0d1526', border: `1px solid ${color}`,
+              borderRadius: '8px', padding: '8px 10px', fontSize: '10px',
+              color: '#e2e8f0', whiteSpace: 'nowrap', textAlign: 'center',
+              boxShadow: `0 4px 12px rgba(0, 0, 0, 0.5)`
+            }}>
+              <div style={{ color: color, fontWeight: 900, marginBottom: 2, textTransform: 'uppercase' }}>{name}</div>
+              <div>{claims} Active Claims</div>
+              <div className="mt-1">Lang: {lang} | Risk: <span style={{ color: risk === 'HIGH' ? '#ef4444' : risk === 'MEDIUM' ? '#f59e0b' : '#22c55e' }}>{risk}</span></div>
+            </div>
+          </foreignObject>
+        </g>
+      )}
+    </Marker>
+  );
+};
+
+// ─── Compute risk level from score ──────────────────────────────────────────
+const riskLevel = (score) => score > 70 ? 'HIGH' : score > 40 ? 'MEDIUM' : 'LOW';
+
+export const ThreatsPage = () => {
+  const [liveData, setLiveData] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  const fetchLive = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/latest_claims');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setLiveData(data);
+        setLastUpdated(new Date().toLocaleTimeString());
+      }
+    } catch { /* backend offline — keep stale data */ }
   };
 
-  const needleX = cx + r * Math.cos(toRad(angle));
-  const needleY = cy + r * Math.sin(toRad(angle));
-  const color = value > 70 ? '#ef4444' : value > 40 ? '#f59e0b' : '#22c55e';
+  useEffect(() => {
+    fetchLive();
+    const t = setInterval(fetchLive, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── Dynamic hotspots: scale claims + risk from live API ──────────────────
+  const avgRisk = liveData.length
+    ? liveData.reduce((s, d) => s + (d.risk_score || 50), 0) / liveData.length
+    : 50;
+  const scale = 1 + (liveData.length / 40);
+
+  const hotspots = BASE_HOTSPOTS.map(h => ({
+    ...h,
+    claims: Math.round(h.baseClaims * scale),
+    risk: riskLevel(avgRisk * h.riskWeight),
+  }));
+
+  // ── Top 5 threats from live data ─────────────────────────────────────────
+  const top5 = liveData.length
+    ? [...liveData].sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0)).slice(0, 5)
+    : [
+        { text: 'Mass vaccine death cover-up claim',      category: 'Health',   risk_score: 91, translated_text: 'Hindi' },
+        { text: 'Emergency election fraud narrative',     category: 'Politics', risk_score: 84, translated_text: 'English' },
+        { text: 'Central bank collapse rumour',           category: 'Finance',  risk_score: 77, translated_text: 'Kannada' },
+        { text: 'Terrorist sleeper cell activation hoax', category: 'Military', risk_score: 69, translated_text: 'Urdu' },
+        { text: 'AI robot uprising disinformation wave',  category: 'Tech',     risk_score: 58, translated_text: 'Telugu' },
+      ];
+
+  const cardStyle = { backgroundColor: 'rgba(10,15,30,0.8)', border: '1px solid rgba(0,245,212,0.2)', borderRadius: 12 };
 
   return (
-    <div className="flex flex-col items-center">
-      <svg width={size} height={size * 0.85} viewBox={`0 0 ${size} ${size}`}>
-        <defs>
-          <linearGradient id={`gaugeGrad-${label}`} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%"   stopColor="#22c55e" />
-            <stop offset="50%"  stopColor="#f59e0b" />
-            <stop offset="100%" stopColor="#ef4444" />
-          </linearGradient>
-        </defs>
-        {/* Track */}
-        <path d={arcPath(startAngle, startAngle + totalAngle, r)} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={size * 0.07} strokeLinecap="round" />
-        {/* Fill */}
-        <path d={arcPath(startAngle, angle, r)} fill="none" stroke={`url(#gaugeGrad-${label})`} strokeWidth={size * 0.07} strokeLinecap="round" />
-        {/* Needle dot */}
-        <circle cx={needleX} cy={needleY} r={size * 0.04} fill={color} style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
-        {/* Center value */}
-        <text x={cx} y={cy + 6} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.2} fontWeight="900" fill={color} fontFamily="monospace">{value}</text>
-      </svg>
-      {label && <p className="text-xs font-black uppercase tracking-widest text-slate-400 -mt-2">{label}</p>}
-      {sublabel && <p className="text-[10px] text-slate-600 mt-1">{sublabel}</p>}
-    </div>
-  );
-};
-
-// ─── World Map with dots ────────────────────────────────────────────────────
-const HOTSPOTS = [
-  { name: 'India',       cx: 67, cy: 48, claims: 1204, lang: 'Hindi',   risk: 'HIGH' },
-  { name: 'USA',         cx: 18, cy: 38, claims: 876,  lang: 'English', risk: 'MEDIUM' },
-  { name: 'Brazil',      cx: 28, cy: 62, claims: 643,  lang: 'Portuguese', risk: 'MEDIUM' },
-  { name: 'Pakistan',    cx: 63, cy: 43, claims: 512,  lang: 'Urdu',    risk: 'HIGH' },
-  { name: 'Nigeria',     cx: 50, cy: 52, claims: 401,  lang: 'English', risk: 'HIGH' },
-  { name: 'Indonesia',   cx: 78, cy: 56, claims: 338,  lang: 'Bahasa',  risk: 'MEDIUM' },
-  { name: 'Russia',      cx: 68, cy: 28, claims: 289,  lang: 'Russian', risk: 'LOW' },
-  { name: 'Bangladesh',  cx: 69, cy: 47, claims: 221,  lang: 'Bangla',  risk: 'HIGH' },
-];
-
-const ThreatDot = ({ cx, cy, claims, name, lang, risk, size }) => {
-  const [hovered, setHovered] = useState(false);
-  const r = size > 100 ? 4 + (claims / 300) : 3 + (claims / 400);
-  const color = risk === 'HIGH' ? '#ef4444' : risk === 'MEDIUM' ? '#f59e0b' : '#22c55e';
-
-  return (
-    <g>
-      <circle cx={`${cx}%`} cy={`${cy}%`} r={r * 2} fill={color} opacity={0.08} />
-      <circle
-        cx={`${cx}%`} cy={`${cy}%`} r={r}
-        fill={color} opacity={0.9}
-        style={{ cursor: 'pointer', filter: `drop-shadow(0 0 6px ${color})` }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      />
-      {hovered && (
-        <foreignObject x={`${cx}%`} y={`${cy}%`} width="160" height="80" style={{ overflow: 'visible' }}>
-          <div style={{
-            background: '#0d1526', border: '1px solid rgba(0,245,212,0.3)',
-            borderRadius: '8px', padding: '8px 10px', fontSize: '10px',
-            color: '#e2e8f0', whiteSpace: 'nowrap', transform: 'translate(-50%, -120%)',
-          }}>
-            <div style={{ color: '#00f5d4', fontWeight: 900, marginBottom: 2 }}>{name}</div>
-            <div>{claims} active claims</div>
-            <div>Top: {lang} · Risk: <span style={{ color }}>{risk}</span></div>
-          </div>
-        </foreignObject>
-      )}
-    </g>
-  );
-};
-
-// ─── Spike Chart data ───────────────────────────────────────────────────────
-const spikeData = [
-  { month: 'Jan', coordinated: 40, organic: 80 },
-  { month: 'Feb', coordinated: 65, organic: 95 },
-  { month: 'Mar', coordinated: 120, organic: 60 },
-  { month: 'Apr', coordinated: 85, organic: 110 },
-  { month: 'May', coordinated: 150, organic: 90 },
-  { month: 'Jun', coordinated: 95, organic: 140 },
-];
-
-const TOP_THREATS = [
-  { title: 'Mass vaccine death cover-up claim',      cat: 'Health',    risk: 91, lang: 'Hindi'   },
-  { title: 'Emergency election fraud narrative',     cat: 'Politics',  risk: 84, lang: 'English' },
-  { title: 'Central bank collapse rumour',           cat: 'Finance',   risk: 77, lang: 'Kannada' },
-  { title: 'Terrorist sleeper cell activation hoax', cat: 'Military',  risk: 69, lang: 'Urdu'    },
-  { title: 'AI robot uprising disinformation wave',  cat: 'Tech',      risk: 58, lang: 'Telugu'  },
-];
-
-const SpikeTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{ background: '#0d1526', border: '1px solid rgba(0,245,212,0.2)', borderRadius: 8, padding: '8px 12px', fontSize: 11 }}>
-      <p style={{ color: '#a855f7', fontWeight: 700 }}>Coordinated: {payload[0]?.value}</p>
-      <p style={{ color: '#00f5d4', fontWeight: 700 }}>Organic: {payload[1]?.value}</p>
-    </div>
-  );
-};
-
-// ─── Main Component ──────────────────────────────────────────────────────────
-export const ThreatsPage = () => {
-  const globalThreat = 72;
-  const botScore = 58;
-
-  return (
-    <div className="min-h-screen p-8 space-y-8"
-      style={{ background: 'linear-gradient(135deg, #0a0f1e 0%, #060b18 100%)' }}>
+    <div className="min-h-screen p-8" style={{ backgroundColor: '#0a0f1e' }}>
 
       {/* Header */}
-      <div className="flex items-center gap-5">
-        <div className="w-14 h-14 rounded-2xl flex items-center justify-center border"
-          style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.2)' }}>
-          <ShieldAlert className="w-7 h-7 text-red-400" />
-        </div>
-        <div>
-          <h1 className="text-4xl font-black uppercase tracking-tighter text-white">
-            THREAT <span className="italic" style={{ color: '#00f5d4' }}>INTELLIGENCE MAP</span>
-          </h1>
-          <p className="text-slate-500 text-xs uppercase tracking-[0.3em] mt-1">
-            Global misinformation hotspots · Coordinated threat detection
-          </p>
-        </div>
+      <div className="mb-8">
+        <h1 className="text-4xl">
+          <span className="text-white font-bold uppercase tracking-tight">THREAT</span>{' '}
+          <span className="italic uppercase" style={{ color: '#00f5d4' }}>INTELLIGENCE MAP</span>
+        </h1>
+        {liveData.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+            <span style={{ color: '#22c55e', fontSize: 11, fontWeight: 700 }}>LIVE — {liveData.length} claims indexed · Last sync {lastUpdated}</span>
+          </div>
+        )}
       </div>
 
-      {/* Map + Gauges Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Row 1: World Map + Bot Activity Intelligence */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
 
         {/* World Map */}
-        <div className="lg:col-span-8 rounded-2xl border p-5" style={cardStyle}>
-          <div className="flex items-center gap-2 mb-4">
-            <Globe size={15} style={{ color: '#00f5d4' }} />
-            <h3 className="text-xs font-black uppercase tracking-widest" style={{ color: '#00f5d4' }}>
-              Global Hotspot Map
-            </h3>
-          </div>
-          {/* SVG world map background + dots */}
-          <div className="relative rounded-xl overflow-hidden" style={{ background: 'rgba(6,182,212,0.03)', border: '1px solid rgba(6,182,212,0.07)' }}>
-            <svg viewBox="0 0 100 60" className="w-full" style={{ minHeight: 260 }}>
-              {/* Simplified continents as path shapes */}
-              {/* North America */}
-              <path d="M5,20 L22,18 L28,25 L25,40 L18,45 L8,38 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* South America */}
-              <path d="M20,45 L30,43 L34,55 L28,68 L20,65 L16,55 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* Europe */}
-              <path d="M42,15 L56,13 L58,22 L52,25 L44,23 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* Africa */}
-              <path d="M44,28 L56,26 L60,40 L56,55 L46,56 L40,46 L40,35 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* Asia */}
-              <path d="M57,13 L88,12 L92,25 L88,38 L75,42 L60,38 L57,28 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* Australia */}
-              <path d="M76,52 L88,50 L90,62 L80,65 L74,60 Z" fill="rgba(6,182,212,0.06)" stroke="rgba(6,182,212,0.12)" strokeWidth="0.3" />
-              {/* Grid lines */}
-              {[20,40,60,80].map(x => <line key={x} x1={x} y1="0" x2={x} y2="100" stroke="rgba(255,255,255,0.03)" strokeWidth="0.3" />)}
-              {[20,40,60].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="rgba(255,255,255,0.03)" strokeWidth="0.3" />)}
-              {/* Hotspot dots */}
-              {HOTSPOTS.map(h => <ThreatDot key={h.name} {...h} />)}
-            </svg>
-            {/* Legend */}
-            <div className="absolute bottom-3 right-3 flex items-center gap-4 text-[9px] font-bold uppercase">
-              {[['HIGH', '#ef4444'], ['MEDIUM', '#f59e0b'], ['LOW', '#22c55e']].map(([label, color]) => (
-                <div key={label} className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full" style={{ background: color }} />
-                  <span style={{ color }}>{label}</span>
-                </div>
-              ))}
-            </div>
+        <div className="lg:col-span-8 rounded-xl border p-6 flex flex-col" style={cardStyle}>
+          <h2 className="text-sm font-bold uppercase mb-4" style={{ color: '#00f5d4' }}>Global Hotspots</h2>
+          <div className="w-full flex-1 min-h-[400px] bg-[#060b18] rounded-xl overflow-hidden border flex items-center justify-center"
+            style={{ borderColor: 'rgba(0,245,212,0.1)' }}>
+            <ComposableMap projectionConfig={{ scale: 140 }} width={800} height={400} style={{ width: '100%', height: '100%' }}>
+              <Geographies geography={geoUrl}>
+                {({ geographies }) => geographies.map(geo => (
+                  <Geography key={geo.rsmKey} geography={geo} fill="#0f172a" stroke="#1e293b" strokeWidth={0.5}
+                    style={{ default: { outline: 'none' }, hover: { outline: 'none', fill: '#1e293b' }, pressed: { outline: 'none' } }} />
+                ))}
+              </Geographies>
+              {hotspots.map((h, i) => <ThreatDot key={i} coordinates={h.coordinates} claims={h.claims} name={h.name} lang={h.lang} risk={h.risk} />)}
+            </ComposableMap>
           </div>
         </div>
 
-        {/* Gauges */}
-        <div className="lg:col-span-4 space-y-6">
-          <div className="rounded-2xl border p-5 flex flex-col items-center" style={cardStyle}>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Global Threat Index</p>
-            <ArcGauge value={globalThreat} size={160} label="Threat Level" />
-            <span className="mt-3 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full"
-              style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
-              🔴 HIGH ALERT
-            </span>
-          </div>
-          <div className="rounded-2xl border p-5 flex flex-col items-center" style={cardStyle}>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Bot Activity Score</p>
-            <ArcGauge value={botScore} size={140} label="Bot Activity" />
-          </div>
+        {/* Bot Activity Intelligence */}
+        <div className="lg:col-span-4">
+          <BotActivityCard liveData={liveData} isLive={liveData.length > 0} lastUpdated={lastUpdated} />
         </div>
       </div>
 
-      {/* Top Threats + Spike Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Top Threats */}
-        <div className="rounded-2xl border p-5" style={cardStyle}>
-          <div className="flex items-center gap-2 mb-5">
-            <Zap size={15} style={{ color: '#facc15' }} />
-            <h3 className="text-xs font-black uppercase tracking-widest text-white">Top 5 Active Threats</h3>
+      {/* Row 2: Top 5 Threats — real-time, full width */}
+      <div className="rounded-xl border p-6" style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <h2 className="text-sm font-bold uppercase" style={{ color: '#00f5d4' }}>Top 5 Threats</h2>
+            {liveData.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 5px #22c55e' }} />
+                <span style={{ color: '#22c55e', fontSize: 10, fontWeight: 700 }}>LIVE</span>
+              </div>
+            )}
           </div>
-          <div className="space-y-4">
-            {TOP_THREATS.map((t, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="text-2xl font-black font-mono mt-1"
-                  style={{ color: i === 0 ? '#ef4444' : i === 1 ? '#f59e0b' : '#475569', lineHeight: 1 }}>
-                  {i + 1}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-slate-200 text-sm font-semibold truncate">{t.title}</p>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full"
-                      style={{ background: 'rgba(168,85,247,0.12)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.25)' }}>
-                      {t.cat}
-                    </span>
-                    <span className="text-[9px] text-slate-500">{t.lang}</span>
-                    <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${t.risk}%` }} transition={{ duration: 1, delay: i * 0.1 }}
-                        className="h-full rounded-full"
-                        style={{ background: t.risk > 75 ? '#ef4444' : t.risk > 50 ? '#f59e0b' : '#22c55e' }} />
+          <div>
+            {top5.map((t, i) => {
+              const risk = t.risk_score || 0;
+              const barColor = risk > 70 ? '#ef4444' : risk > 40 ? '#f59e0b' : '#22c55e';
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    height: 52, padding: '10px 12px',
+                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Rank */}
+                  <span style={{ color: '#00f5d4', fontWeight: 700, fontSize: 13, width: 30, flexShrink: 0, textAlign: 'center' }}>
+                    #{i + 1}
+                  </span>
+
+                  {/* Claim text — truncated single line */}
+                  <span style={{
+                    flex: 1, fontSize: 13, color: '#e2e8f0', fontWeight: 500,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {t.text}
+                  </span>
+
+                  {/* Category badge */}
+                  <span style={{
+                    flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                    padding: '3px 8px', borderRadius: 6,
+                    background: 'rgba(0,245,212,0.08)', border: '1px solid rgba(0,245,212,0.25)',
+                    color: '#00f5d4', letterSpacing: '0.05em',
+                  }}>
+                    {t.category}
+                  </span>
+
+                  {/* Risk bar + score */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, width: 160 }}>
+                    <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 4, overflow: 'hidden' }}>
+                      <motion.div
+                        initial={{ width: 0 }} animate={{ width: `${risk}%` }} transition={{ duration: 1 }}
+                        style={{ height: '100%', background: barColor, boxShadow: `0 0 6px ${barColor}80`, borderRadius: 4 }}
+                      />
                     </div>
-                    <span className="text-[9px] font-bold font-mono text-slate-400">{t.risk}</span>
+                    <span style={{ color: barColor, fontWeight: 700, fontSize: 12, fontFamily: 'monospace', width: 26, textAlign: 'right' }}>
+                      {risk}
+                    </span>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
-
-        {/* Spike Chart */}
-        <div className="rounded-2xl border p-5" style={cardStyle}>
-          <div className="flex items-center gap-2 mb-5">
-            <TrendingUp size={15} style={{ color: '#a855f7' }} />
-            <h3 className="text-xs font-black uppercase tracking-widest text-white">Coordination Spike Detection</h3>
-          </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={spikeData} barGap={4}>
-              <XAxis dataKey="month" tick={{ fill: '#475569', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#475569', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<SpikeTooltip />} />
-              <Bar dataKey="coordinated" fill="#a855f7" radius={[4,4,0,0]}
-                style={{ filter: 'drop-shadow(0 0 4px rgba(168,85,247,0.5))' }} />
-              <Bar dataKey="organic" fill="#00f5d4" radius={[4,4,0,0]}
-                style={{ filter: 'drop-shadow(0 0 4px rgba(0,245,212,0.4))' }} />
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="flex justify-center gap-6 mt-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
-              <span className="w-2 h-2 rounded" style={{ background: '#a855f7' }} /> Coordinated
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
-              <span className="w-2 h-2 rounded" style={{ background: '#00f5d4' }} /> Organic
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
-};
-
-const cardStyle = {
-  background: 'rgba(13,21,38,0.9)',
-  borderColor: 'rgba(0,245,212,0.1)',
-  backdropFilter: 'blur(16px)',
 };

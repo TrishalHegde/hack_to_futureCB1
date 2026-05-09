@@ -8,3 +8,6 @@ langdetect
 python-dotenv
 pydantic
 aiohttp
+sqlalchemy
+python-multipart
+groq

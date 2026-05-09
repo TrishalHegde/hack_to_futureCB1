@@ -28,3 +28,5 @@ class VerifyResponse(BaseModel):
     risk_metrics: Optional[RiskMetrics] = None
     sources: List[Source]
     threat_card: Optional[ThreatCard] = None
+    stance: Optional[str] = None
+    emotional_tone: Optional[str] = None

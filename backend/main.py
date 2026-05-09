@@ -25,7 +25,7 @@ app = FastAPI(title="VAULTX Intelligence API")
 # Configure CORS for Vite frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,10 +46,10 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
     translated_text = await llm_service.translate_text(raw_text)
     risk_report = risk_analyzer.analyze(translated_text)
 
-    # 2. Extract Claim & Category
+    # 2. Extract Claim (Stage 1)
     extraction = await llm_service.extract_claim(translated_text)
-    claim = extraction.get("claim", translated_text)
-    category = extraction.get("category", "General")
+    claim = extraction.get("atomic_claim", translated_text)
+    category = "General"
 
     # 3. Parallel Web Search
     search_results = await search_service.parallel_search(claim)
@@ -57,8 +57,8 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
     # 4. Evidence Synthesis
     synthesis = await llm_service.synthesize_evidence(claim, search_results)
 
-    # 5. Stance & Dissent Check
-    is_dissent = stance_service.is_legitimate_dissent(claim, raw_text)
+    # 5. Stance & Dissent Check (Stage 2)
+    stance_data = await stance_service.analyze_stance(raw_text, claim)
 
     # Build Sources List
     sources = []
@@ -117,7 +117,9 @@ async def verify_claim(request: VerifyRequest, db: Session = Depends(get_db)):
         category=category,
         risk_metrics=risk_metrics,
         sources=sources[:5],
-        threat_card=threat_card
+        threat_card=threat_card,
+        stance=stance_data.get("stance", "NEUTRAL"),
+        emotional_tone=stance_data.get("emotional_tone", "Neutral")
     )
 
 @app.get("/api/stats")
@@ -143,6 +145,41 @@ async def get_stats(db: Session = Depends(get_db)):
 async def get_latest_claims(db: Session = Depends(get_db)):
     claims = db.query(ClaimRecord).order_by(ClaimRecord.timestamp.desc()).limit(10).all()
     return claims
+
+MOCK_RUMORS = [
+    {"text": "WHO confirms new airborne virus strain originating from polar ice caps", "lang": "English"},
+    {"text": "Bhai log kal se bank account link nahi kiya toh saara paisa freeze ho jayega", "lang": "Hinglish"},
+    {"text": "NASA satellite captures footage of alien mothership near Jupiter", "lang": "English"},
+    {"text": "Breaking: Govt banning all social media apps starting midnight", "lang": "English"},
+    {"text": "Nimbu paani and baking soda cures all forms of cancer instantly", "lang": "Hinglish"},
+    {"text": "EVM machines found hacked in local election using bluetooth", "lang": "English"},
+    {"text": "Deepfake alert: Prime Minister's speech on new tax laws is AI generated", "lang": "English"},
+    {"text": "Rs 500 notes with star mark are counterfeit, RBI warning", "lang": "Hinglish"},
+    {"text": "Solar flare expected to wipe out global internet tomorrow", "lang": "English"},
+    {"text": "Local tap water poisoned by rival political party in Sector 4", "lang": "English"}
+]
+
+@app.get("/api/web_rumors")
+async def get_web_rumors():
+    import random
+    from datetime import datetime
+    
+    num_rumors = random.randint(5, 8)
+    selected_rumors = random.sample(MOCK_RUMORS, num_rumors)
+    
+    rumors = []
+    for item in selected_rumors:
+        rumors.append({
+            "id": random.randint(1000, 9999),
+            "text": item["text"],
+            "translated_text": item["text"] if item["lang"] == "English" else f"[Translated] {item['text']}",
+            "verdict": random.choice(["FALSE", "LIKELY FALSE", "UNVERIFIABLE", "MIXED"]),
+            "confidence": round(random.uniform(0.4, 0.95), 2),
+            "risk_score": random.randint(60, 95),
+            "category": random.choice(["Health", "Politics", "Finance", "Social", "General"]),
+            "timestamp": datetime.now().isoformat()
+        })
+    return rumors
 
 @app.post("/api/media/extract")
 async def extract_media_claim(file: UploadFile = FastAPIFile(...)):

@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
-import { Home, LayoutDashboard, Settings, Activity, ShieldAlert, Zap, Fingerprint, Radio } from 'lucide-react';
+import { Home, LayoutDashboard, Activity, ShieldAlert, Zap, Fingerprint, Radio } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CyberHero } from './components/CyberHero';
 import { InputSection } from './components/InputSection';
 import { IntelDashboard } from './components/IntelDashboard';
+import { VerdictDashboard } from './components/VerdictDashboard';
 import { AdminCenter } from './components/AdminCenter';
 import { MediaForensicScanner } from './components/MediaForensicScanner';
 import { PulsePage } from './components/PulsePage';
 import { ThreatsPage } from './components/ThreatsPage';
-import { SentinelTruthPanel } from './components/SentinelTruthPanel';
 import { verifyClaim } from './api';
 
 function App() {
@@ -46,16 +46,14 @@ function App() {
         </div>
 
         <nav className="flex-1 w-full space-y-2">
-          <NavButton active={activeTab === 'home'}      icon={<Home size={20} />}         label="Home"      onClick={() => setActiveTab('home')} />
-          <NavButton active={activeTab === 'forensics'} icon={<Fingerprint size={20} />}  label="Forensics" onClick={() => setActiveTab('forensics')} />
-          <NavButton active={activeTab === 'admin'}     icon={<LayoutDashboard size={20}/>} label="Admin"   onClick={() => setActiveTab('admin')} />
-          <NavButton active={activeTab === 'pulse'}     icon={<Radio size={20} />}         label="Pulse"     onClick={() => setActiveTab('pulse')} />
-          <NavButton active={activeTab === 'threats'}   icon={<ShieldAlert size={20} />}   label="Threats"   onClick={() => setActiveTab('threats')} />
+          <NavButton active={activeTab === 'home'} icon={<Home size={20} />} label="Home" onClick={() => setActiveTab('home')} />
+          <NavButton active={activeTab === 'forensics'} icon={<Fingerprint size={20} />} label="Forensics" onClick={() => setActiveTab('forensics')} />
+          <NavButton active={activeTab === 'admin'} icon={<LayoutDashboard size={20} />} label="Admin" onClick={() => setActiveTab('admin')} />
+          <NavButton active={activeTab === 'pulse'} icon={<Radio size={20} />} label="Pulse" onClick={() => setActiveTab('pulse')} />
+          <NavButton active={activeTab === 'threats'} icon={<ShieldAlert size={20} />} label="Threats" onClick={() => setActiveTab('threats')} />
         </nav>
 
-        <div className="mt-auto pt-6 border-t border-white/5 w-full">
-          <NavButton icon={<Settings size={20} />} label="Config" />
-        </div>
+
       </aside>
 
       {/* ── Main ── */}
@@ -67,12 +65,14 @@ function App() {
             <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-full">
               <CyberHero />
               <div className="max-w-7xl mx-auto px-4 -mt-8 mb-20 relative z-10">
-                {!result && !isLoading ? (
+                {isLoading ? (
+                  <IntelDashboard isLoading={true} />
+                ) : result ? (
+                  <VerdictDashboard result={result} />
+                ) : (
                   <div className="animate-in slide-in-from-bottom-10 duration-700">
                     <InputSection onSubmit={handleVerify} isLoading={isLoading} />
                   </div>
-                ) : (
-                  <IntelDashboard result={result} isLoading={isLoading} />
                 )}
 
                 {error && (
@@ -81,16 +81,12 @@ function App() {
                   </div>
                 )}
 
-                {/* Sentinel Truth AI Panel — shown after result */}
                 {result && !isLoading && (
-                  <>
-                    <SentinelTruthPanel result={result} />
-                    <div className="mt-12 flex justify-center">
-                      <button onClick={() => setResult(null)} className="cyber-button">
-                        Initiate New Scan
-                      </button>
-                    </div>
-                  </>
+                  <div className="mt-12 flex justify-center">
+                    <button onClick={() => setResult(null)} className="cyber-button">
+                      Initiate New Scan
+                    </button>
+                  </div>
                 )}
               </div>
             </motion.div>
@@ -133,11 +129,10 @@ function App() {
 const NavButton = ({ active, icon, label, onClick }) => (
   <button
     onClick={onClick}
-    className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-300 ${
-      active
+    className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-300 ${active
         ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(0,242,255,0.1)]'
         : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-    }`}
+      }`}
   >
     {icon}
     <span className="hidden lg:block text-xs font-bold uppercase tracking-widest">{label}</span>
