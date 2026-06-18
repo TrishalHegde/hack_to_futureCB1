@@ -33,10 +33,22 @@ class LLMService:
 
     async def extract_claim(self, text: str) -> Dict[str, Any]:
         prompt = f"""
-        Extract the core falsifiable claim from the following text.
-        Discard emojis, greetings, and personal opinions.
-        Return ONLY a JSON object with this structure:
-        {{"claim": "string", "entities": ["string"], "timeframe": "string"}}
+        You are an expert Fact-Checking Intelligence Analyst. Your task is to process raw text from social media and extract the core "Atomic Claim."
+
+        RULES:
+        1. Extract exactly ONE primary claim that can be verified with evidence.
+        2. Identify the language and script (e.g., Hindi-Latin, Marathi-Devanagari).
+        3. Extract specific entities (Names, Places, Organizations).
+        4. If the text is Romanized regional language (e.g., "Hinglish"), summarize it in clear English for search optimization.
+
+        OUTPUT FORMAT (JSON ONLY):
+        {{
+          "detected_language": "string",
+          "atomic_claim": "string",
+          "search_queries": ["query 1", "query 2"],
+          "entities": ["entity 1", "entity 2"],
+          "is_opinion": boolean
+        }}
         
         Text: {text}
         """
@@ -51,7 +63,13 @@ class LLMService:
             return json.loads(content)
         except Exception as e:
             print(f"Error extracting claim: {e}")
-            return {"claim": text, "entities": [], "timeframe": "unknown"}
+            return {
+                "detected_language": "Unknown",
+                "atomic_claim": text,
+                "search_queries": [text],
+                "entities": [],
+                "is_opinion": False
+            }
 
     async def synthesize_evidence(self, claim: str, search_results: List[Dict[str, str]]) -> Dict[str, Any]:
         context = "\n".join([f"Source ({res.get('url')}): {res.get('content')}" for res in search_results])
